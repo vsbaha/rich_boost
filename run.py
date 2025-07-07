@@ -8,6 +8,7 @@ from app.handlers.user import router as user_router
 from app.handlers.booster import router as booster_router
 from app.database.crud import init_db
 from app.middleware.user_update import UserUpdateMiddleware
+from app.middleware.ban_check import BanCheckMiddleware
 from app.utils.logger import setup_logging
 
 def clear_console():
@@ -28,6 +29,7 @@ async def main():
     dp.include_router(user_router)
     dp.include_router(booster_router)
     dp.message.middleware(UserUpdateMiddleware())
+    dp.message.middleware(BanCheckMiddleware())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

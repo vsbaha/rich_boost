@@ -92,3 +92,19 @@ async def update_user_balance(tg_id, new_balance):
         if user:
             user.balance = new_balance
             await session.commit()
+
+async def update_user_bonus_balance(tg_id, new_bonus_balance):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.bonus_balance = new_bonus_balance
+            await session.commit()
+
+async def update_user_role(tg_id, new_role):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.role = new_role
+            await session.commit()
