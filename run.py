@@ -10,6 +10,7 @@ from app.database.crud import init_db
 from app.middleware.user_update import UserUpdateMiddleware
 from app.middleware.ban_check import BanCheckMiddleware
 from app.utils.logger import setup_logging
+from app.utils.backup import setup_backup_scheduler 
 
 def clear_console():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -23,6 +24,7 @@ async def main():
     print("=" * 40)
     await init_db()  # инициализация БД!
     bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    setup_backup_scheduler(bot)
     dp = Dispatcher()
     dp.include_router(common_router)
     dp.include_router(admin_router)

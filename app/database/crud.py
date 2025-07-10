@@ -18,12 +18,12 @@ async def add_user(tg_id, username, region=None, role="user"):
             session.add(user)
             await session.commit()
 
-async def update_user_region(tg_id, region):
+async def update_user_region(tg_id: int, new_region: str):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == tg_id))
         user = result.scalar_one_or_none()
         if user:
-            user.region = region
+            user.region = new_region
             await session.commit()
 
 async def get_user_by_tg_id(tg_id):
@@ -107,4 +107,14 @@ async def update_user_role(tg_id, new_role):
         user = result.scalar_one_or_none()
         if user:
             user.role = new_role
+            await session.commit()
+
+async def update_user_region_and_balance(tg_id, new_region, new_balance, new_bonus_balance):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.region = new_region
+            user.balance = new_balance
+            user.bonus_balance = new_bonus_balance
             await session.commit()

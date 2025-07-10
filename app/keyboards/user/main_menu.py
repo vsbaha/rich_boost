@@ -5,7 +5,7 @@ def main_menu_keyboard():
         keyboard=[
             [KeyboardButton(text="🎮 Создать заказ"), KeyboardButton(text="📦 Мои заказы")],
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="👤 Профиль")],
-            [KeyboardButton(text="🎟 Бонусы и рефералы"), KeyboardButton(text="📞 Связь с поддержкой")]
+            [KeyboardButton(text="🎟 Бонусы и рефералы"), KeyboardButton(text="📞 Поддержка")]
         ],
         resize_keyboard=True
     )

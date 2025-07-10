@@ -446,5 +446,33 @@ async def cancel_broadcast(call: CallbackQuery, state: FSMContext):
         reply_markup=keyboard
     )
     await call.answer()
-    
-# --- КОНЕЦ ФУНКЦИОНАЛА КНОПКИ: ПОЛЬЗОВАТЕЛИ ---
+
+@router.callback_query(F.data.startswith("user_set_booster:"))
+@admin_only
+async def user_set_booster_callback(call: CallbackQuery):
+    """Назначить пользователя бустером."""
+    logger.info(f"Админ @{call.from_user.username} назначает бустером пользователя {call.data}")
+    tg_id = int(call.data.split(":")[1])
+    await update_user_role(tg_id, "booster")
+    user = await get_user_by_tg_id(tg_id)
+    await call.message.edit_text(
+        format_user_profile(user),
+        parse_mode="HTML",
+        reply_markup=user_profile_keyboard(user)
+    )
+    await call.answer("Пользователь назначен бустером.")
+
+@router.callback_query(F.data.startswith("user_unset_booster:"))
+@admin_only
+async def user_unset_booster_callback(call: CallbackQuery):
+    """Снять роль бустера с пользователя."""
+    logger.info(f"Админ @{call.from_user.username} снимает роль бустера с пользователя {call.data}")
+    tg_id = int(call.data.split(":")[1])
+    await update_user_role(tg_id, "user")
+    user = await get_user_by_tg_id(tg_id)
+    await call.message.edit_text(
+        format_user_profile(user),
+        parse_mode="HTML",
+        reply_markup=user_profile_keyboard(user)
+    )
+    await call.answer("Роль бустера снята.")
