@@ -31,3 +31,13 @@ class BoosterPayout(Base):
     amount = Column(Float)                     
     paid_at = Column(DateTime(timezone=True), server_default=func.now())
     comment = Column(String)
+
+class PaymentRequest(Base):
+    __tablename__ = "payment_requests"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    region = Column(String)
+    amount = Column(Float)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    status = Column(String, default="pending")  # pending, accepted, rejected
+    receipt_file_id = Column(String)  # file_id скрина чека

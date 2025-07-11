@@ -21,28 +21,15 @@ from app.database.crud import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from app.states.admin_states import AdminStates
-from app.utils.currency import get_currency
-
+from app.utils.currency import get_active_balance
+from app.utils.user import format_user_profile
 router = Router()
 logger = logging.getLogger(__name__)
 
 # --- ФУНКЦИОНАЛ ДЛЯ КНОПКИ: ПОЛЬЗОВАТЕЛИ ---
 USERS_PER_PAGE = 5  # Количество пользователей на одной странице
 
-# --- Пагинация пользователей ---
-def format_user_profile(user) -> str:
-    """Формирует текст профиля пользователя для вывода в админке."""
-    currency = get_currency(user.region)
-    return (
-        f"<b>Профиль пользователя</b>\n"
-        f"ID: <code>{user.tg_id}</code>\n"
-        f"Username: @{user.username or '—'}\n"
-        f"Регион: {user.region or '—'}\n"
-        f"Роль: {user.role}\n"
-        f"Баланс: {user.balance} {currency}\n"
-        f"Бонусный баланс: {user.bonus_balance} {currency}\n"
-        f"Дата регистрации: {user.created_at.strftime('%d.%m.%Y %H:%M' + '(UTC)') if user.created_at else '—'}"
-    )
+
 
 # --- Админ-панель ---
 @router.message(Command("admin"))
@@ -131,29 +118,40 @@ async def users_search_process(message: Message, state: FSMContext):
         )
     await state.clear()
 
+    
 @router.callback_query(F.data.startswith("user_info:"))
 @admin_only
-async def user_info_callback(call: CallbackQuery):
-    logger.info(f"Админ @{call.from_user.username} смотрит профиль пользователя {call.data}")
-    """Показать профиль выбранного пользователя."""
-    tg_id = int(call.data.split(":")[1])
+async def user_info_from_list(call: CallbackQuery):
+    parts = call.data.split(":")
+    tg_id = int(parts[1])
+    request_id = parts[2] if len(parts) > 2 else None
     user = await get_user_by_tg_id(tg_id)
     if not user:
         await call.answer("Пользователь не найден.", show_alert=True)
         return
-    await call.message.edit_text(
-        format_user_profile(user),
-        parse_mode="HTML",
-        reply_markup=user_profile_keyboard(user)
-    )
+    await call.message.delete()
+    if request_id:
+        from app.keyboards.admin.payments import back_to_payment_keyboard
+        await call.message.answer(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=back_to_payment_keyboard(request_id, user)
+        )
+    else:
+        from app.keyboards.admin.users_pagination import user_profile_keyboard
+        await call.message.answer(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=user_profile_keyboard(user)
+        )
     await call.answer()
 
 @router.callback_query(F.data.startswith("user_ban:"))
 @admin_only
 async def user_ban_callback(call: CallbackQuery):
-    logger.info(f"Админ @{call.from_user.username} пытается забанить пользователя {call.data}")
-    """Забанить пользователя (кроме админа)."""
-    tg_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    tg_id = int(parts[1])
+    request_id = parts[2] if len(parts) > 2 else None
     user = await get_user_by_tg_id(tg_id)
     if user.role == "admin":
         await call.answer("Нельзя забанить администратора!", show_alert=True)
@@ -162,44 +160,64 @@ async def user_ban_callback(call: CallbackQuery):
         await call.answer("Пользователь уже забанен.", show_alert=True)
         return
     await update_user_role(tg_id, "banned")
-    user = await get_user_by_tg_id(tg_id)  # обновляем данные
-    await call.message.edit_text(
-        format_user_profile(user),
-        parse_mode="HTML",
-        reply_markup=user_profile_keyboard(user)
-    )
-    await call.answer("Пользователь забанен.")
+    user = await get_user_by_tg_id(tg_id)
+    if request_id:
+        from app.keyboards.admin.payments import back_to_payment_keyboard
+        await call.message.edit_text(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=back_to_payment_keyboard(request_id, user)
+        )
+    else:
+        from app.keyboards.admin.users_pagination import user_profile_keyboard
+        await call.message.edit_text(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=user_profile_keyboard(user)
+        )
+    await call.answer()
 
 @router.callback_query(F.data.startswith("user_unban:"))
 @admin_only
 async def user_unban_callback(call: CallbackQuery):
     logger.info(f"Админ @{call.from_user.username} пытается разбанить пользователя {call.data}")
-    """Разбанить пользователя."""
-    tg_id = int(call.data.split(":")[1])
+    parts = call.data.split(":")
+    tg_id = int(parts[1])
+    request_id = parts[2] if len(parts) > 2 else None
     user = await get_user_by_tg_id(tg_id)
     if user.role != "banned":
         await call.answer("Пользователь не забанен.", show_alert=True)
         return
     await update_user_role(tg_id, "user")
     user = await get_user_by_tg_id(tg_id)  # обновляем данные
-    await call.message.edit_text(
-        format_user_profile(user),
-        parse_mode="HTML",
-        reply_markup=user_profile_keyboard(user)
-    )
-    await call.answer("Пользователь разбанен.")
+    if request_id:
+        from app.keyboards.admin.payments import back_to_payment_keyboard
+        await call.message.edit_text(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=back_to_payment_keyboard(request_id, user)
+        )
+        await call.answer("Пользователь разбанен.")
+    else:
+        from app.keyboards.admin.users_pagination import user_profile_keyboard
+        await call.message.edit_text(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=user_profile_keyboard(user)
+        )
+        await call.answer("Пользователь разбанен.")
 
 @router.callback_query(F.data.startswith("user_balance:"))
 @admin_only
 async def user_balance_callback(call: CallbackQuery, state: FSMContext):
-    logger.info(f"Админ @{call.from_user.username} инициировал изменение баланса пользователя {call.data}")
-    """Запрос нового значения баланса."""
-    tg_id = int(call.data.split(":")[1])
-    await state.update_data(balance_tg_id=tg_id)
+    parts = call.data.split(":")
+    tg_id = int(parts[1])
+    request_id = parts[2] if len(parts) > 2 else None
+    await state.update_data(balance_tg_id=tg_id, request_id=request_id)
     await call.message.delete()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user_info:{tg_id}")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user_info:{tg_id}:{request_id}" if request_id else f"user_info:{tg_id}")]
         ]
     )
     await call.message.answer(
@@ -212,10 +230,9 @@ async def user_balance_callback(call: CallbackQuery, state: FSMContext):
 @router.message(AdminStates.waiting_for_balance)
 @admin_only
 async def set_user_balance(message: Message, state: FSMContext):
-    logger.info(f"Админ @{message.from_user.username} меняет баланс пользователя: {message.text}")
-    """Установка нового баланса и возврат к профилю пользователя."""
     data = await state.get_data()
     tg_id = data.get("balance_tg_id")
+    request_id = data.get("request_id")
     try:
         new_balance = int(message.text)
     except ValueError:
@@ -223,25 +240,33 @@ async def set_user_balance(message: Message, state: FSMContext):
         return
     await update_user_balance(tg_id, new_balance)
     user = await get_user_by_tg_id(tg_id)
-    from app.keyboards.admin.users_pagination import user_profile_keyboard
-    await message.answer(
-        format_user_profile(user),
-        parse_mode="HTML",
-        reply_markup=user_profile_keyboard(user)
-    )
+    if request_id:
+        from app.keyboards.admin.payments import back_to_payment_keyboard
+        await message.answer(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=back_to_payment_keyboard(request_id, user)
+        )
+    else:
+        from app.keyboards.admin.users_pagination import user_profile_keyboard
+        await message.answer(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=user_profile_keyboard(user)
+        )
     await state.clear()
 
 @router.callback_query(F.data.startswith("user_bonus:"))
 @admin_only
 async def user_bonus_callback(call: CallbackQuery, state: FSMContext):
-    logger.info(f"Админ @{call.from_user.username} инициировал изменение бонусного баланса пользователя {call.data}")
-    """Запрос нового значения бонусного баланса."""
-    tg_id = int(call.data.split(":")[1])
-    await state.update_data(bonus_tg_id=tg_id)
+    parts = call.data.split(":")
+    tg_id = int(parts[1])
+    request_id = parts[2] if len(parts) > 2 else None
+    await state.update_data(bonus_tg_id=tg_id, request_id=request_id)
     await call.message.delete()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user_info:{tg_id}")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"user_info:{tg_id}:{request_id}" if request_id else f"user_info:{tg_id}")]
         ]
     )
     await call.message.answer(
@@ -254,10 +279,9 @@ async def user_bonus_callback(call: CallbackQuery, state: FSMContext):
 @router.message(AdminStates.waiting_for_bonus)
 @admin_only
 async def set_user_bonus_balance(message: Message, state: FSMContext):
-    logger.info(f"Админ @{message.from_user.username} меняет бонусный баланс пользователя: {message.text}")
-    """Установка нового бонусного баланса и возврат к профилю пользователя."""
     data = await state.get_data()
     tg_id = data.get("bonus_tg_id")
+    request_id = data.get("request_id")
     try:
         new_bonus = int(message.text)
     except ValueError:
@@ -265,12 +289,20 @@ async def set_user_bonus_balance(message: Message, state: FSMContext):
         return
     await update_user_bonus_balance(tg_id, new_bonus)
     user = await get_user_by_tg_id(tg_id)
-    from app.keyboards.admin.users_pagination import user_profile_keyboard
-    await message.answer(
-        format_user_profile(user),
-        parse_mode="HTML",
-        reply_markup=user_profile_keyboard(user)
-    )
+    if request_id:
+        from app.keyboards.admin.payments import back_to_payment_keyboard
+        await message.answer(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=back_to_payment_keyboard(request_id, user)
+        )
+    else:
+        from app.keyboards.admin.users_pagination import user_profile_keyboard
+        await message.answer(
+            format_user_profile(user),
+            parse_mode="HTML",
+            reply_markup=user_profile_keyboard(user)
+        )
     await state.clear()
 
 @router.callback_query(F.data.startswith("user_info:"))

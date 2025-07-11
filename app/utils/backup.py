@@ -1,6 +1,6 @@
 import shutil
 import datetime
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler # type: ignore
 from aiogram import Bot
 from aiogram.types.input_file import FSInputFile
 from app.config import DB_PATH, BACKUP_PATH, GROUP_ID, BACKUP_HOUR

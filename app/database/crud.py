@@ -1,5 +1,5 @@
 from .db import AsyncSessionLocal
-from .models import User, Base, BoosterAccount
+from .models import User, Base, BoosterAccount, PaymentRequest
 from sqlalchemy.future import select
 from .models import Base
 from .db import engine
@@ -90,7 +90,12 @@ async def update_user_balance(tg_id, new_balance):
         result = await session.execute(select(User).where(User.tg_id == tg_id))
         user = result.scalar_one_or_none()
         if user:
-            user.balance = new_balance
+            if user.region == "🇰🇬 КР":
+                user.balance_kg = new_balance
+            elif user.region == "🇰🇿 КЗ":
+                user.balance_kz = new_balance
+            elif user.region == "🇷🇺 РУ":
+                user.balance_ru = new_balance
             await session.commit()
 
 async def update_user_bonus_balance(tg_id, new_bonus_balance):
@@ -98,7 +103,12 @@ async def update_user_bonus_balance(tg_id, new_bonus_balance):
         result = await session.execute(select(User).where(User.tg_id == tg_id))
         user = result.scalar_one_or_none()
         if user:
-            user.bonus_balance = new_bonus_balance
+            if user.region == "🇰🇬 КР":
+                user.bonus_kg = new_bonus_balance
+            elif user.region == "🇰🇿 КЗ":
+                user.bonus_kz = new_bonus_balance
+            elif user.region == "🇷🇺 РУ":
+                user.bonus_ru = new_bonus_balance
             await session.commit()
 
 async def update_user_role(tg_id, new_role):
@@ -109,12 +119,67 @@ async def update_user_role(tg_id, new_role):
             user.role = new_role
             await session.commit()
 
-async def update_user_region_and_balance(tg_id, new_region, new_balance, new_bonus_balance):
+
+async def create_payment_request(user_id, region, amount, receipt_file_id):
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        request = PaymentRequest(
+            user_id=user_id,
+            region=region,
+            amount=amount,
+            receipt_file_id=receipt_file_id,
+            status="pending"
+        )
+        session.add(request)
+        await session.commit()
+        await session.refresh(request)
+        return request
+
+async def get_payment_request_by_id(request_id):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(PaymentRequest).where(PaymentRequest.id == request_id))
+        return result.scalar_one_or_none()
+
+async def update_payment_request_status(request_id, status):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(PaymentRequest).where(PaymentRequest.id == request_id))
+        request = result.scalar_one_or_none()
+        if request:
+            request.status = status
+            await session.commit()
+
+async def get_user_by_id(user_id):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+
+async def update_user_balance_by_region(user, region, amount):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == user.id))
         user = result.scalar_one_or_none()
         if user:
-            user.region = new_region
-            user.balance = new_balance
-            user.bonus_balance = new_bonus_balance
+            if region == "🇰🇬 КР":
+                user.balance_kg += amount
+            elif region == "🇰🇿 КЗ":
+                user.balance_kz += amount
+            elif region == "🇷🇺 РУ":
+                user.balance_ru += amount
             await session.commit()
+
+async def get_admins():
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User.tg_id).where(User.role == "admin"))
+        return [row[0] for row in result.all()]
+    
+async def get_payment_requests_by_user(user_id):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PaymentRequest).where(PaymentRequest.user_id == user_id).order_by(PaymentRequest.created_at.desc())
+        )
+        return result.scalars().all()
+    
+async def get_all_payment_requests():
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PaymentRequest).order_by(PaymentRequest.created_at.desc())
+        )
+        return result.scalars().all()

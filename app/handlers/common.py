@@ -40,16 +40,3 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=region_keyboard()
         )
         await state.set_state(RegionStates.waiting_for_region)
-
-@router.message(RegionStates.waiting_for_region)
-async def region_chosen(message: Message, state: FSMContext):
-    if message.text not in ["🇰🇬 КР", "🇰🇿 КЗ", "🇷🇺 РУ"]:
-        await message.answer("Пожалуйста, выберите регион только с помощью кнопок ниже!")
-        return
-    await update_user_region(message.from_user.id, message.text)
-    logger.info(f"@{message.from_user.username} (id={message.from_user.id}) выбрал регион: {message.text}")
-    await message.answer(
-        f"Ваш регион: {message.text}\nГлавное меню:",
-        reply_markup=main_menu_keyboard()
-    )
-    await state.clear()
