@@ -8,6 +8,7 @@ BOT_TOKEN = os.getenv("TOKEN")
 # Пути для бэкапа базы данных
 DB_PATH = "rich_boost.db"
 BACKUP_PATH = "backup.db"
+
 GROUP_ID = -1002896042115  # ID вашей TG-группы для бэкапа
 BACKUP_HOUR = 1  # Время отправки бэкапа (час, 24ч формат)
 
@@ -15,3 +16,4 @@ MIN_TOPUP_KGS = 100
 MIN_TOPUP_KZT = 500
 MIN_TOPUP_RUB = 200
 
+PAGE_SIZE = 5  # Количество элементов на странице в списках

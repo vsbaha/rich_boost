@@ -6,3 +6,6 @@ class AdminStates(StatesGroup):
     waiting_for_bonus = State()
     waiting_for_broadcast = State()
     waiting_for_boosters_broadcast = State()
+    
+class SearchStates(StatesGroup):
+    waiting_for_id = State()

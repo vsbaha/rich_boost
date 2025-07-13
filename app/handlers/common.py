@@ -40,3 +40,18 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=region_keyboard()
         )
         await state.set_state(RegionStates.waiting_for_region)
+
+@router.message(RegionStates.waiting_for_region)
+async def choose_region(message: Message, state: FSMContext):
+    region = message.text.strip()
+    valid_regions = ["🇰🇬 КР", "🇰🇿 КЗ", "🇷🇺 РУ"]
+    if region not in valid_regions:
+        await message.answer("Пожалуйста, выберите регион с помощью кнопок ниже.", reply_markup=region_keyboard())
+        return
+    await update_user_region(message.from_user.id, region)
+    logger.info(f"@{message.from_user.username} (id={message.from_user.id}) выбрал регион: {region}")
+    await state.clear()
+    await message.answer(
+        f"Регион выбран: {region}\nТеперь вы можете пользоваться ботом!",
+        reply_markup=main_menu_keyboard()
+    )

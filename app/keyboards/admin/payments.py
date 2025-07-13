@@ -42,14 +42,20 @@ def back_to_payment_keyboard(request_id, user):
         ]
     )
 
-def admin_topup_action_keyboard(request_id, status, filter_status, user_tg_id=None):
+def admin_topup_action_keyboard(request_id, status, filter_status, user_tg_id=None, from_list=True):
     buttons = []
+    suffix = ":from_list" if from_list else ""
     if status == "pending":
         buttons.append([
-            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"accept_payment:{request_id}:filter:{filter_status}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_payment:{request_id}:filter:{filter_status}")
+            InlineKeyboardButton(
+                text="✅ Одобрить",
+                callback_data=f"accept_payment:{request_id}:filter:{filter_status}{suffix}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"reject_payment:{request_id}:filter:{filter_status}{suffix}"
+            )
         ])
-        # Кнопка "Посмотреть профиль"
         if user_tg_id:
             buttons.append([
                 InlineKeyboardButton(
@@ -57,7 +63,12 @@ def admin_topup_action_keyboard(request_id, status, filter_status, user_tg_id=No
                     callback_data=f"payment_user_info:{user_tg_id}:{request_id}"
                 )
             ])
-    buttons.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_filtered:{filter_status}")
-    ])
+    if from_list:
+        buttons.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_filtered:{filter_status}")
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_filter_menu")
+        ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
