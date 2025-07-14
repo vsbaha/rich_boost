@@ -30,10 +30,10 @@ async def main():
     bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
     setup_backup_scheduler(bot)
     dp = Dispatcher()
-    dp.include_router(common_router)
     dp.include_router(admin_router)
     dp.include_router(user_router)
     dp.include_router(booster_router)
+    dp.include_router(common_router)
     dp.message.middleware(UserUpdateMiddleware())
     dp.message.middleware(BanCheckMiddleware())
     dp.message.middleware(AntiSpamMiddleware(rate_limit=1.0))  # 1 сообщение в секунду

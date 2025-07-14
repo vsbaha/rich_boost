@@ -17,7 +17,10 @@ from app.database.crud import (
     update_user_balance,
     update_user_bonus_balance,
     update_user_role,
+    create_booster_account,
+    set_booster_status
 )
+from app.database.session import get_session
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from app.states.admin_states import AdminStates
@@ -487,6 +490,9 @@ async def user_set_booster_callback(call: CallbackQuery):
     tg_id = int(call.data.split(":")[1])
     await update_user_role(tg_id, "booster")
     user = await get_user_by_tg_id(tg_id)
+    async with get_session() as session:
+        await create_booster_account(user.id, user.username, session)
+        await set_booster_status(user.id, "active", session)
     await call.message.edit_text(
         format_user_profile(user),
         parse_mode="HTML",
@@ -502,6 +508,8 @@ async def user_unset_booster_callback(call: CallbackQuery):
     tg_id = int(call.data.split(":")[1])
     await update_user_role(tg_id, "user")
     user = await get_user_by_tg_id(tg_id)
+    async with get_session() as session:
+        await set_booster_status(user.id, "inactive", session)
     await call.message.edit_text(
         format_user_profile(user),
         parse_mode="HTML",

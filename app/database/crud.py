@@ -3,18 +3,33 @@ from .models import User, Base, BoosterAccount, PaymentRequest
 from sqlalchemy.future import select
 from .models import Base
 from .db import engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, or_
+from datetime import datetime, timezone
+from aiogram import Bot
+from app.config import BOT_TOKEN
+from app.database.models import User, BonusHistory
+
+bot = Bot(token=BOT_TOKEN)
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-async def add_user(tg_id, username, region=None, role="user"):
+async def add_user(tg_id, username, region=None, role="user", referrer_id=None):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == tg_id))
         user = result.scalar_one_or_none()
         if not user:
-            user = User(tg_id=tg_id, username=username, region=region, role=role)
+            now = datetime.now(timezone.utc)
+            user = User(
+                tg_id=tg_id,
+                username=username,
+                region=region,
+                role=role,
+                created_at=now,
+                referrer_id=referrer_id,
+            )
             session.add(user)
             await session.commit()
 
@@ -44,12 +59,14 @@ async def get_booster_account(user_id):
         result = await session.execute(select(BoosterAccount).where(BoosterAccount.user_id == user_id))
         return result.scalar_one_or_none()
 
-async def create_booster_account(user_id):
-    async with AsyncSessionLocal() as session:
-        account = BoosterAccount(user_id=user_id)
-        session.add(account)
+async def create_booster_account(user_id, username, session):
+    from app.database.models import BoosterAccount
+    account = BoosterAccount(user_id=user_id, username=username)
+    session.add(account)
+    try:
         await session.commit()
-        return account
+    except IntegrityError:
+        await session.rollback()
 
 async def update_booster_balance(user_id, amount):
     async with AsyncSessionLocal() as session:
@@ -155,15 +172,26 @@ async def get_user_by_id(user_id):
 async def update_user_balance_by_region(user, region, amount):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.id == user.id))
-        user = result.scalar_one_or_none()
-        if user:
+        user_db = result.scalar_one_or_none()
+        if user_db:
+            is_first_topup = (
+                user_db.balance_kg == 0 and
+                user_db.balance_kz == 0 and
+                user_db.balance_ru == 0
+            )
+            # Пополняем баланс
             if region == "🇰🇬 КР":
-                user.balance_kg += amount
+                user_db.balance_kg += amount
             elif region == "🇰🇿 КЗ":
-                user.balance_kz += amount
+                user_db.balance_kz += amount
             elif region == "🇷🇺 РУ":
-                user.balance_ru += amount
+                user_db.balance_ru += amount
             await session.commit()
+
+            # Если это первое пополнение — начисляем бонус пригласившему
+            if is_first_topup and user_db.referrer_id:
+                BONUS_AMOUNT = 50  # укажи нужную сумму
+                await add_bonus_to_referrer(user_db.id, BONUS_AMOUNT)
 
 async def get_admins():
     async with AsyncSessionLocal() as session:
@@ -183,3 +211,53 @@ async def get_all_payment_requests():
             select(PaymentRequest).order_by(PaymentRequest.created_at.desc())
         )
         return result.scalars().all()
+
+from sqlalchemy import select
+
+async def set_booster_status(user_id: int, status: str, session):
+    result = await session.execute(
+        select(BoosterAccount).where(BoosterAccount.user_id == user_id)
+    )
+    account = result.scalar_one_or_none()
+    if account:
+        account.status = status
+        await session.commit()
+
+
+
+async def add_bonus_to_referrer(user_id: int, amount: float):
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if user and user.referrer_id:
+            referrer = await session.get(User, user.referrer_id)
+            if referrer:
+                # Можно начислять в бонус_kg, бонус_kz, бонус_ru по региону реферала
+                if user.region == "🇰🇬 КР":
+                    referrer.bonus_kg += amount
+                elif user.region == "🇰🇿 КЗ":
+                    referrer.bonus_kz += amount
+                elif user.region == "🇷🇺 РУ":
+                    referrer.bonus_ru += amount
+                await session.commit()
+
+                # Добавляем запись в историю бонусов
+                history = BonusHistory(
+                    user_id=referrer.id,
+                    amount=amount,
+                    source="Реферал",
+                    comment=(
+                        f"Бонус за приглашённого пользователя "
+                        f"{'@' + user.username if user.username else user.tg_id}"
+                    )
+                )
+                session.add(history)
+                await session.commit()
+
+                if referrer.tg_id:
+                    try:
+                        await bot.send_message(
+                            referrer.tg_id,
+                            f"Вам начислен бонус {amount} за первое пополнение приглашённого друга!"
+                        )
+                    except Exception:
+                        pass  # если пользователь заблокировал бота и т.д.

@@ -17,3 +17,5 @@ MIN_TOPUP_KZT = 500
 MIN_TOPUP_RUB = 200
 
 PAGE_SIZE = 5  # Количество элементов на странице в списках
+
+ADMIN_USERNAME = "kkm1s" # Укажите ваш username без @
