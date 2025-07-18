@@ -1,5 +1,5 @@
 import logging
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -11,11 +11,14 @@ from app.database.crud import (
     add_user,
     update_user_region,
     get_user_by_tg_id,
+    get_user_by_id,
 )
 from app.states.user_states import RegionStates
+from app.config import BOT_TOKEN
 
 router = Router()
 logger = logging.getLogger(__name__)
+bot = Bot(token=BOT_TOKEN)
 
 
 @router.message(CommandStart())
@@ -57,6 +60,17 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=region_keyboard(),
         )
         await state.set_state(RegionStates.waiting_for_region)
+
+        if referrer_id:
+            referrer = await get_user_by_id(referrer_id)  # функция, возвращающая User по id
+            if referrer:
+                try:
+                    await bot.send_message(
+                        referrer.tg_id,
+                        f"По вашей ссылке зарегистрировался новый пользователь: @{message.from_user.username or message.from_user.id}"
+                    )
+                except Exception:
+                    pass
 
 
 @router.message(RegionStates.waiting_for_region)

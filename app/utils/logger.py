@@ -7,7 +7,7 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)
     file_handler = RotatingFileHandler(
         f"{log_dir}/bot.log",
-        maxBytes=2_000_000,  # ~10000 строк по 200 символов (примерно)
+        maxBytes=5*1024*1024,  
         backupCount=5,       # Хранить до 5 файлов: bot.log, bot.log.1, ...
         encoding="utf-8"
     )

@@ -1,4 +1,3 @@
-from .db import AsyncSessionLocal
 from .models import User, Base, BoosterAccount, PaymentRequest
 from sqlalchemy.future import select
 from .models import Base
@@ -8,7 +7,9 @@ from sqlalchemy import func, or_
 from datetime import datetime, timezone
 from aiogram import Bot
 from app.config import BOT_TOKEN
-from app.database.models import User, BonusHistory
+from app.database.db import AsyncSessionLocal
+from sqlalchemy import delete
+from app.database.models import User, BonusHistory, PromoCode, PromoActivation
 
 bot = Bot(token=BOT_TOKEN)
 
@@ -257,7 +258,77 @@ async def add_bonus_to_referrer(user_id: int, amount: float):
                     try:
                         await bot.send_message(
                             referrer.tg_id,
-                            f"Вам начислен бонус {amount} за первое пополнение приглашённого друга!"
+                            f"Вам начислен бонус {amount} за первое пополнение приглашённого пользователя!"
                         )
                     except Exception:
                         pass  # если пользователь заблокировал бота и т.д.
+
+async def check_and_activate_promo(user_id: int, code: str):
+    async with AsyncSessionLocal() as session:
+        # Получаем промокод
+        result = await session.execute(
+            select(PromoCode).where(PromoCode.code == code)
+        )
+        promo = result.scalar_one_or_none()
+        if not promo:
+            return False, "Промокод не найден."
+
+        # Проверка срока действия
+        if promo.expires_at and promo.expires_at < datetime.now(timezone.utc):
+            return False, "Срок действия промокода истёк."
+
+        # Проверка лимита активаций
+        if promo.max_activations is not None and promo.activations >= promo.max_activations:
+            return False, "Лимит активаций промокода исчерпан."
+
+        # Проверка на повторную активацию (для всех промокодов)
+        activation = await session.execute(
+            select(PromoActivation).where(
+                PromoActivation.user_id == user_id,
+                PromoActivation.promo_id == promo.id
+            )
+        )
+        if activation.scalar_one_or_none():
+            return False, "Вы уже активировали этот промокод."
+
+        # Всё ок — активируем промокод
+        promo.activations += 1
+        session.add(PromoActivation(user_id=user_id, promo_id=promo.id))
+
+        # Применяем действие промокода
+        user = await session.get(User, user_id)
+        if promo.type == "discount":
+            await session.commit()
+            return True, f"Промокод активирован! Скидка {promo.value}% будет применена к вашему следующему заказу."
+        elif promo.type == "bonus":
+            if promo.currency == "сом":
+                user.bonus_kg += promo.value
+            elif promo.currency == "тенге":
+                user.bonus_kz += promo.value
+            elif promo.currency == "руб.":
+                user.bonus_ru += promo.value
+            else:
+                user.bonus_ru += promo.value  # по умолчанию в рублях
+            session.add(BonusHistory(
+                user_id=user_id,
+                amount=promo.value,
+                source="Промокод",
+                comment=f"Активация промокода {promo.code}"
+            ))
+            await session.commit()
+            return True, f"Промокод активирован! Вам начислено {promo.value} {promo.currency or ''} на бонусный счёт."
+        else:
+            await session.commit()
+            return True, "Промокод активирован!"
+
+
+async def delete_expired_promocodes():
+    async with AsyncSessionLocal() as session:
+        now_utc = datetime.now(timezone.utc)
+        await session.execute(
+            delete(PromoCode).where(
+                PromoCode.expires_at.isnot(None),
+                PromoCode.expires_at < now_utc
+            )
+        )
+        await session.commit()

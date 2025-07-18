@@ -22,9 +22,7 @@ from app.database.crud import (
 )
 from app.database.session import get_session
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from app.states.admin_states import AdminStates
-from app.utils.currency import get_active_balance
 from app.utils.user import format_user_profile
 router = Router()
 logger = logging.getLogger(__name__)
@@ -45,7 +43,6 @@ async def admin_panel(message: Message):
 @admin_only
 async def admin_users(message: Message):
     logger.info(f"Админ @{message.from_user.username} открыл список пользователей")
-    """Показать первую страницу пользователей с общей статистикой."""
     page = 1
     total_users = await count_users()
     total_clients = await count_users_by_role("user")
@@ -67,8 +64,7 @@ async def admin_users(message: Message):
 @router.callback_query(F.data.startswith("users_page:"))
 @admin_only
 async def users_page_callback(call: CallbackQuery):
-    logger.info(f"Админ @{call.from_user.username} листает пользователей, страница {call.data}")
-    """Обработка пагинации пользователей."""
+    logger.info(f"Админ @{call.from_user.username} листает пользователей, страница {call.data.split(':')[1]}")
     page = int(call.data.split(":")[1])
     total_users = await count_users()
     total_pages = max(1, (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE)
@@ -93,7 +89,6 @@ async def users_page_callback(call: CallbackQuery):
 @admin_only
 async def users_search_start(call: CallbackQuery, state: FSMContext):
     logger.info(f"Админ @{call.from_user.username} начал поиск пользователя")
-    """Запрос поиска пользователя."""
     await call.message.delete()
     await call.message.answer("Введите username или ID пользователя для поиска:")
     await state.set_state(AdminStates.waiting_for_query)
@@ -103,7 +98,6 @@ async def users_search_start(call: CallbackQuery, state: FSMContext):
 @admin_only
 async def users_search_process(message: Message, state: FSMContext):
     logger.info(f"Админ @{message.from_user.username} ищет пользователя: {message.text}")
-    """Обработка поиска пользователя."""
     query = message.text.strip().lstrip("@")
     users = await search_users(query)
     if not users:
@@ -121,7 +115,6 @@ async def users_search_process(message: Message, state: FSMContext):
         )
     await state.clear()
 
-    
 @router.callback_query(F.data.startswith("user_info:"))
 @admin_only
 async def user_info_from_list(call: CallbackQuery):
@@ -130,8 +123,10 @@ async def user_info_from_list(call: CallbackQuery):
     request_id = parts[2] if len(parts) > 2 else None
     user = await get_user_by_tg_id(tg_id)
     if not user:
+        logger.info(f"Админ @{call.from_user.username} попытался открыть профиль несуществующего пользователя {tg_id}")
         await call.answer("Пользователь не найден.", show_alert=True)
         return
+    logger.info(f"Админ @{call.from_user.username} открыл профиль пользователя @{user.username or user.tg_id}")
     await call.message.delete()
     if request_id:
         from app.keyboards.admin.payments import back_to_payment_keyboard
@@ -157,12 +152,15 @@ async def user_ban_callback(call: CallbackQuery):
     request_id = parts[2] if len(parts) > 2 else None
     user = await get_user_by_tg_id(tg_id)
     if user.role == "admin":
+        logger.info(f"Админ @{call.from_user.username} попытался забанить администратора @{user.username or user.tg_id}")
         await call.answer("Нельзя забанить администратора!", show_alert=True)
         return
     if user.role == "banned":
+        logger.info(f"Админ @{call.from_user.username} попытался забанить уже забаненного пользователя @{user.username or user.tg_id}")
         await call.answer("Пользователь уже забанен.", show_alert=True)
         return
     await update_user_role(tg_id, "banned")
+    logger.info(f"Админ @{call.from_user.username} забанил пользователя @{user.username or user.tg_id}")
     user = await get_user_by_tg_id(tg_id)
     if request_id:
         from app.keyboards.admin.payments import back_to_payment_keyboard
@@ -189,9 +187,11 @@ async def user_unban_callback(call: CallbackQuery):
     request_id = parts[2] if len(parts) > 2 else None
     user = await get_user_by_tg_id(tg_id)
     if user.role != "banned":
+        logger.info(f"Админ @{call.from_user.username} попытался разбанить не забаненного пользователя @{user.username or user.tg_id}")
         await call.answer("Пользователь не забанен.", show_alert=True)
         return
     await update_user_role(tg_id, "user")
+    logger.info(f"Админ @{call.from_user.username} разбанил пользователя @{user.username or user.tg_id}")
     user = await get_user_by_tg_id(tg_id)  # обновляем данные
     if request_id:
         from app.keyboards.admin.payments import back_to_payment_keyboard
@@ -216,6 +216,7 @@ async def user_balance_callback(call: CallbackQuery, state: FSMContext):
     parts = call.data.split(":")
     tg_id = int(parts[1])
     request_id = parts[2] if len(parts) > 2 else None
+    logger.info(f"Админ @{call.from_user.username} начал изменение баланса пользователя {tg_id}")
     await state.update_data(balance_tg_id=tg_id, request_id=request_id)
     await call.message.delete()
     keyboard = InlineKeyboardMarkup(
@@ -239,9 +240,11 @@ async def set_user_balance(message: Message, state: FSMContext):
     try:
         new_balance = int(message.text)
     except ValueError:
+        logger.info(f"Админ @{message.from_user.username} ввёл некорректный баланс: {message.text}")
         await message.answer("Введите корректное число!")
         return
     await update_user_balance(tg_id, new_balance)
+    logger.info(f"Админ @{message.from_user.username} изменил баланс пользователя {tg_id} на {new_balance}")
     user = await get_user_by_tg_id(tg_id)
     if request_id:
         from app.keyboards.admin.payments import back_to_payment_keyboard
@@ -265,6 +268,7 @@ async def user_bonus_callback(call: CallbackQuery, state: FSMContext):
     parts = call.data.split(":")
     tg_id = int(parts[1])
     request_id = parts[2] if len(parts) > 2 else None
+    logger.info(f"Админ @{call.from_user.username} начал изменение бонусного баланса пользователя {tg_id}")
     await state.update_data(bonus_tg_id=tg_id, request_id=request_id)
     await call.message.delete()
     keyboard = InlineKeyboardMarkup(
@@ -288,9 +292,11 @@ async def set_user_bonus_balance(message: Message, state: FSMContext):
     try:
         new_bonus = int(message.text)
     except ValueError:
+        logger.info(f"Админ @{message.from_user.username} ввёл некорректный бонусный баланс: {message.text}")
         await message.answer("Введите корректное число!")
         return
     await update_user_bonus_balance(tg_id, new_bonus)
+    logger.info(f"Админ @{message.from_user.username} изменил бонусный баланс пользователя {tg_id} на {new_bonus}")
     user = await get_user_by_tg_id(tg_id)
     if request_id:
         from app.keyboards.admin.payments import back_to_payment_keyboard
@@ -312,7 +318,6 @@ async def set_user_bonus_balance(message: Message, state: FSMContext):
 @admin_only
 async def back_to_profile_from_balance(call: CallbackQuery, state: FSMContext):
     logger.info(f"Админ @{call.from_user.username} вернулся к профилю пользователя {call.data}")
-    """Возврат к профилю пользователя из ввода баланса."""
     tg_id = int(call.data.split(":")[1])
     user = await get_user_by_tg_id(tg_id)
     await state.clear()
@@ -327,7 +332,6 @@ async def back_to_profile_from_balance(call: CallbackQuery, state: FSMContext):
 @admin_only
 async def users_broadcast_start(call: CallbackQuery, state: FSMContext):
     logger.info(f"Админ @{call.from_user.username} начал рассылку всем пользователям")
-    """Запрос текста для рассылки."""
     await call.message.delete()
     await call.message.answer("Введите текст рассылки, который получат все пользователи:")
     await state.set_state(AdminStates.waiting_for_broadcast)
@@ -337,16 +341,13 @@ async def users_broadcast_start(call: CallbackQuery, state: FSMContext):
 @admin_only
 async def users_broadcast_process(message: Message, state: FSMContext):
     logger.info(f"Админ @{message.from_user.username} отправляет рассылку всем: {message.text or '[фото]'}")
-    """Отправка рассылки всем пользователям с прогрессом и итоговой статистикой. Поддержка фото и текста."""
     users = await get_users_page(offset=0, limit=1000000)
     total = len(users)
     delivered = 0
     failed = 0
 
-    # Сообщаем администратору о начале рассылки
     progress_msg = await message.answer(f"📢 Рассылка началась...\nВсего пользователей: {total}")
 
-    # Определяем, что отправлять: фото или текст
     is_photo = message.photo and len(message.photo) > 0
     text = message.caption if is_photo else message.text
 
@@ -389,13 +390,13 @@ async def users_broadcast_process(message: Message, state: FSMContext):
         f"Всего пользователей: {total}",
         reply_markup=keyboard
     )
+    logger.info(f"Админ @{message.from_user.username} завершил рассылку: доставлено {delivered}, не доставлено {failed}")
     await state.clear()
 
 @router.callback_query(F.data == "boosters_broadcast")
 @admin_only
 async def boosters_broadcast_start(call: CallbackQuery, state: FSMContext):
     logger.info(f"Админ @{call.from_user.username} начал рассылку бустерам")
-    """Запрос текста для рассылки бустерам."""
     await call.message.delete()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -410,9 +411,7 @@ async def boosters_broadcast_start(call: CallbackQuery, state: FSMContext):
 @admin_only
 async def boosters_broadcast_process(message: Message, state: FSMContext):
     logger.info(f"Админ @{message.from_user.username} отправляет рассылку бустерам: {message.text or '[фото]'}")
-    """Отправка рассылки всем бустерам с прогрессом и итоговой статистикой. Поддержка фото и текста."""
-    # Получаем только бустеров
-    boosters = await search_users("booster")  # или отдельная функция для получения всех бустеров
+    boosters = await search_users("booster")
     total = len(boosters)
     delivered = 0
     failed = 0
@@ -461,15 +460,14 @@ async def boosters_broadcast_process(message: Message, state: FSMContext):
         f"Всего бустеров: {total}",
         reply_markup=keyboard
     )
+    logger.info(f"Админ @{message.from_user.username} завершил рассылку бустерам: доставлено {delivered}, не доставлено {failed}")
     await state.clear()
-
 
 # --- Отмена рассылки ---
 @router.callback_query(F.data == "cancel_broadcast")
 @admin_only
 async def cancel_broadcast(call: CallbackQuery, state: FSMContext):
     logger.info(f"Админ @{call.from_user.username} отменил рассылку")
-    """Отмена рассылки и возврат к списку пользователей."""
     await state.clear()
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -485,7 +483,6 @@ async def cancel_broadcast(call: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("user_set_booster:"))
 @admin_only
 async def user_set_booster_callback(call: CallbackQuery):
-    """Назначить пользователя бустером."""
     logger.info(f"Админ @{call.from_user.username} назначает бустером пользователя {call.data}")
     tg_id = int(call.data.split(":")[1])
     await update_user_role(tg_id, "booster")
@@ -503,7 +500,6 @@ async def user_set_booster_callback(call: CallbackQuery):
 @router.callback_query(F.data.startswith("user_unset_booster:"))
 @admin_only
 async def user_unset_booster_callback(call: CallbackQuery):
-    """Снять роль бустера с пользователя."""
     logger.info(f"Админ @{call.from_user.username} снимает роль бустера с пользователя {call.data}")
     tg_id = int(call.data.split(":")[1])
     await update_user_role(tg_id, "user")

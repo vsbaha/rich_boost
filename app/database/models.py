@@ -1,5 +1,5 @@
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey, Float, Boolean
 
 Base = declarative_base()
 
@@ -47,19 +47,26 @@ class PaymentRequest(Base):
 
 class PromoCode(Base):
     __tablename__ = "promo_codes"
+
     id = Column(Integer, primary_key=True)
-    code = Column(String, unique=True, nullable=False)
-    type = Column(String, nullable=False)  # "discount" или "amount"
-    value = Column(Float, nullable=False)  # % или сумма
-    max_activations = Column(Integer, nullable=True)  # None = бесконечно
-    activations = Column(Integer, default=0)
-    is_active = Column(Integer, default=1)
+    code = Column(String, unique=True, nullable=False) 
+    type = Column(String, nullable=False)
+    value = Column(Float, nullable=False)
+    currency = Column(String, nullable=True)
+    is_one_time = Column(Boolean, default=True) 
+    max_activations = Column(Integer, nullable=True) 
+    activations = Column(Integer, default=0)  
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True) 
+    comment = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)  # Новое поле
 
 class PromoActivation(Base):
     __tablename__ = "promo_activations"
+
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    promo_id = Column(Integer, ForeignKey("promo_codes.id"))
+    user_id = Column(Integer)
+    promo_id = Column(Integer)
     activated_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class BonusHistory(Base):

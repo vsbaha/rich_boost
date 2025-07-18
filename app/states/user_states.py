@@ -6,3 +6,6 @@ class RegionStates(StatesGroup):
 class TopUpStates(StatesGroup):
     waiting_for_amount = State()
     waiting_for_receipt = State()
+    
+class PromoStates(StatesGroup):
+    waiting_for_promo_code = State()
