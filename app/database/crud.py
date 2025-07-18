@@ -5,11 +5,12 @@ from .db import engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, or_
 from datetime import datetime, timezone
+import uuid
 from aiogram import Bot
 from app.config import BOT_TOKEN
 from app.database.db import AsyncSessionLocal
 from sqlalchemy import delete
-from app.database.models import User, BonusHistory, PromoCode, PromoActivation
+from app.database.models import User, BonusHistory, PromoCode, PromoActivation, Order
 
 bot = Bot(token=BOT_TOKEN)
 
@@ -332,3 +333,87 @@ async def delete_expired_promocodes():
             )
         )
         await session.commit()
+
+async def create_order(order_data: dict) -> Order:
+    """Создает новый заказ"""
+    async with AsyncSessionLocal() as session:
+        # Генерируем уникальный ID заказа
+        order_id = f"#Z{uuid.uuid4().hex[:6].upper()}"
+        
+        order = Order(
+            order_id=order_id,
+            user_id=order_data.get("user_id"),
+            service_type=order_data.get("service_type"),
+            boost_type=order_data.get("boost_type"),
+            region=order_data.get("region"),
+            current_rank=order_data.get("current_rank"),
+            target_rank=order_data.get("target_rank"),
+            current_mythic_stars=order_data.get("current_mythic_stars"),
+            target_mythic_stars=order_data.get("target_mythic_stars"),
+            hero=order_data.get("hero"),
+            lane=order_data.get("lane"),
+            heroes_mains=order_data.get("heroes_mains"),
+            game_login=order_data.get("game_login"),
+            game_password=order_data.get("game_password"),
+            game_id=order_data.get("game_id"),
+            contact_info=order_data.get("contact_info"),
+            base_cost=order_data.get("base_cost"),
+            multiplier=order_data.get("multiplier", 1.0),
+            total_cost=order_data.get("total_cost"),
+            currency=order_data.get("currency"),
+            details=order_data.get("details"),
+            preferred_time=order_data.get("preferred_time"),
+            coaching_topic=order_data.get("coaching_topic"),
+            coaching_hours=order_data.get("coaching_hours"),
+            status="pending"
+        )
+        
+        session.add(order)
+        await session.commit()
+        await session.refresh(order)
+        return order
+
+async def get_user_orders(user_id: int, limit: int = 10, offset: int = 0):
+    """Получает заказы пользователя"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Order)
+            .where(Order.user_id == user_id)
+            .order_by(Order.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return result.scalars().all()
+
+async def get_order_by_id(order_id: str):
+    """Получает заказ по ID"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Order)
+            .where(Order.order_id == order_id)
+        )
+        return result.scalar_one_or_none()
+
+async def update_order_status(order_id: str, new_status: str):
+    """Обновляет статус заказа"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Order)
+            .where(Order.order_id == order_id)
+        )
+        order = result.scalar_one_or_none()
+        if order:
+            order.status = new_status
+            await session.commit()
+            return order
+        return None
+
+async def get_orders_count(user_id: int) -> int:
+    """Получает количество заказов пользователя"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Order)
+            .where(Order.user_id == user_id)
+        )
+        orders = result.scalars().all()
+        return len(orders)

@@ -1,5 +1,5 @@
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey, Float, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey, Float, Boolean, Text
 
 Base = declarative_base()
 
@@ -77,4 +77,56 @@ class BonusHistory(Base):
     source = Column(String)  # например: "Реферал", "Промокод", "Админ"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     comment = Column(String, nullable=True)
+
+class Order(Base):
+    __tablename__ = "orders"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(String, unique=True, index=True)  # Уникальный ID заказа (#Z1234)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    
+    # Основная информация
+    service_type = Column(String)  # "regular_boost", "hero_boost", "coaching"
+    boost_type = Column(String)    # "account", "shared", "mmr", "winrate", "coaching"
+    
+    # Игровые данные
+    region = Column(String)
+    current_rank = Column(String)
+    target_rank = Column(String)
+    current_mythic_stars = Column(Integer, nullable=True)
+    target_mythic_stars = Column(Integer, nullable=True)
+    hero = Column(String, nullable=True)
+    lane = Column(String, nullable=True)
+    heroes_mains = Column(String, nullable=True)
+    
+    # Аккаунт данные
+    game_login = Column(String, nullable=True)
+    game_password = Column(String, nullable=True)
+    game_id = Column(String, nullable=True)
+    contact_info = Column(String, nullable=True)
+    
+    # Финансы
+    base_cost = Column(Float)
+    multiplier = Column(Float, default=1.0)
+    total_cost = Column(Float)
+    currency = Column(String)
+    
+    # Дополнительная информация
+    details = Column(Text, nullable=True)
+    preferred_time = Column(String, nullable=True)
+    coaching_topic = Column(String, nullable=True)
+    coaching_hours = Column(Integer, nullable=True)
+    
+    # Статус заказа
+    status = Column(String, default="pending")  # pending, confirmed, in_progress, completed, cancelled
+    
+    # Даты
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Связи
+    assigned_booster_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    def __repr__(self):
+        return f"<Order {self.order_id}>"
 
