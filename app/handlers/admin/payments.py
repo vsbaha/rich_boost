@@ -100,16 +100,34 @@ async def accept_payment(call: CallbackQuery):
     request_id = int(parts[1])
     filter_status = parts[3] if len(parts) > 3 else "pending"
     from_list = len(parts) > 4 and parts[4] == "from_list"
+    
     payment_request = await get_payment_request_by_id(request_id)
     if payment_request.status != "pending":
         logger.info(f"Админ @{call.from_user.username or 'без username'} попытался принять уже обработанную заявку ID {request_id}")
         await call.answer("Заявка уже обработана!", show_alert=True)
         return
+    
     user = await get_user_by_id(payment_request.user_id)
-    await update_user_balance_by_region(user, payment_request.region, payment_request.amount)
+    
+    # ИСПРАВЛЕНО: извлекаем код региона из строки с флагом
+    region_code = None
+    if "🇰🇬" in payment_request.region:
+        region_code = "kg"
+    elif "🇰🇿" in payment_request.region:
+        region_code = "kz"
+    elif "🇷🇺" in payment_request.region:
+        region_code = "ru"
+    else:
+        # Если region уже в правильном формате
+        region_code = payment_request.region.lower()
+    
+    balance_field = f"balance_{region_code}"
+    await update_user_balance_by_region(user.id, balance_field, payment_request.amount)
+    
     await update_payment_request_status(request_id, "accepted")
     logger.info(f"Админ @{call.from_user.username or 'без username'} принял заявку на пополнение ID {request_id}")
     await call.answer("Пополнение принято!")
+    
     try:
         await call.bot.send_message(
             user.tg_id,
@@ -118,6 +136,7 @@ async def accept_payment(call: CallbackQuery):
         logger.info(f"Пользователь {user.tg_id} уведомлен о принятии заявки")
     except Exception as e:
         logger.warning(f"Админ @{call.from_user.username or 'без username'}: не удалось уведомить пользователя {user.tg_id}: {e}")
+    
     if from_list:
         await show_filtered_requests(call, filter_status, page=1)
     else:
@@ -125,7 +144,7 @@ async def accept_payment(call: CallbackQuery):
             await call.message.delete()
         except Exception as e:
             logger.warning(f"Админ @{call.from_user.username or 'без username'}: сообщение уже удалено или не удалось удалить: {e}")
-
+            
 @router.callback_query(F.data.startswith("reject_payment:"))
 @admin_only
 async def reject_payment(call: CallbackQuery):

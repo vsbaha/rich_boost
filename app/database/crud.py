@@ -11,7 +11,9 @@ from app.config import BOT_TOKEN
 from app.database.db import AsyncSessionLocal
 from sqlalchemy import delete
 from app.database.models import User, BonusHistory, PromoCode, PromoActivation, Order
+import logging
 
+logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 
 async def init_db():
@@ -171,29 +173,34 @@ async def get_user_by_id(user_id):
         result = await session.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
 
-async def update_user_balance_by_region(user, region, amount):
+async def update_user_balance_by_region(user_id: int, balance_field: str, amount: float):
+    """Обновление баланса пользователя по региону"""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == user.id))
+        result = await session.execute(select(User).where(User.id == user_id))
         user_db = result.scalar_one_or_none()
         if user_db:
-            is_first_topup = (
-                user_db.balance_kg == 0 and
-                user_db.balance_kz == 0 and
-                user_db.balance_ru == 0
-            )
-            # Пополняем баланс
-            if region == "🇰🇬 КР":
-                user_db.balance_kg += amount
-            elif region == "🇰🇿 КЗ":
-                user_db.balance_kz += amount
-            elif region == "🇷🇺 РУ":
-                user_db.balance_ru += amount
+            # Проверяем первое пополнение только если amount положительный (пополнение)
+            is_first_topup = False
+            if amount > 0:
+                is_first_topup = (
+                    user_db.balance_kg == 0 and
+                    user_db.balance_kz == 0 and
+                    user_db.balance_ru == 0
+                )
+            
+            # Обновляем баланс
+            current_balance = getattr(user_db, balance_field)
+            setattr(user_db, balance_field, current_balance + amount)
+            
             await session.commit()
 
             # Если это первое пополнение — начисляем бонус пригласившему
             if is_first_topup and user_db.referrer_id:
                 BONUS_AMOUNT = 50  # укажи нужную сумму
                 await add_bonus_to_referrer(user_db.id, BONUS_AMOUNT)
+            
+            return getattr(user_db, balance_field)
+        return None
 
 async def get_admins():
     async with AsyncSessionLocal() as session:
@@ -417,3 +424,48 @@ async def get_orders_count(user_id: int) -> int:
         )
         orders = result.scalars().all()
         return len(orders)
+
+async def update_user_balance(user_id: int, amount: float):
+    """Обновление баланса пользователя"""
+    try:
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            if user:
+                user.balance += amount
+                await session.commit()
+                return user.balance
+            else:
+                return None
+    except Exception:
+        return None
+
+async def get_user_by_id(user_id: int):
+    """Получение пользователя по ID"""
+    try:
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            if user:
+                logger.info(f"Пользователь {user_id} найден в базе данных")
+                return user
+            else:
+                logger.warning(f"Пользователь {user_id} не найден в базе данных")
+                return None
+    except Exception as e:
+        logger.error(f"Ошибка получения пользователя {user_id}: {e}")
+        return None
+
+
+
+async def get_users_by_role(role: str):
+    """Получение пользователей по роли"""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(User).where(User.role == role)
+            )
+            users = result.scalars().all()
+            logger.info(f"Найдено {len(users)} пользователей с ролью '{role}'")
+            return users
+    except Exception as e:
+        logger.error(f"Ошибка получения пользователей с ролью '{role}': {e}")
+        return []
