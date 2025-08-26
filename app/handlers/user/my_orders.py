@@ -94,6 +94,7 @@ async def back_to_orders(call: CallbackQuery):
     keyboard = create_orders_keyboard(orders, page=0, total_orders=total_orders)
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
+    await call.answer()
 
 @router.callback_query(F.data.startswith("orders_page:"))
 async def orders_pagination(call: CallbackQuery):

@@ -102,10 +102,48 @@ def lanes_keyboard():
 def confirm_order_keyboard():
     """Клавиатура подтверждения заказа"""
     buttons = [
-        [InlineKeyboardButton(text="✅ Подтвердить заказ", callback_data="confirm_order")],
+        [InlineKeyboardButton(text="💳 Выбрать способ оплаты", callback_data="choose_payment_method")],
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_order")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_order")]  # Оставляем тут
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def edit_order_keyboard(data):
+    """Клавиатура для редактирования заказа - показывает только доступные для редактирования поля"""
+    buttons = []
+    
+    # Поля, которые всегда можно редактировать
+    if data.get("service_type") != "coaching":
+        # Для буста можно редактировать игровой ID/данные аккаунта
+        if data.get("boost_type") == "account":
+            if data.get("game_login"):
+                buttons.append([InlineKeyboardButton(text="👤 Изменить логин", callback_data="edit_login")])
+            if data.get("game_password"):
+                buttons.append([InlineKeyboardButton(text="🔐 Изменить пароль", callback_data="edit_password")])
+        else:
+            if data.get("game_id"):
+                buttons.append([InlineKeyboardButton(text="🆔 Изменить игровой ID", callback_data="edit_game_id")])
+        
+        # Дополнительные поля для буста
+        if data.get("lane"):
+            buttons.append([InlineKeyboardButton(text="🎮 Изменить лайн", callback_data="edit_lane")])
+        if data.get("heroes_mains"):
+            buttons.append([InlineKeyboardButton(text="🎭 Изменить мейнов", callback_data="edit_heroes")])
+        if data.get("preferred_time"):
+            buttons.append([InlineKeyboardButton(text="⏰ Изменить время", callback_data="edit_time")])
+    else:
+        # Для обучения можно редактировать контакты
+        if data.get("contact_info"):
+            buttons.append([InlineKeyboardButton(text="📞 Изменить контакты", callback_data="edit_contact")])
+    
+    # Поля, которые всегда можно редактировать
+    if data.get("details"):
+        buttons.append([InlineKeyboardButton(text="📝 Изменить детали", callback_data="edit_details")])
+    
+    # Кнопки навигации
+    buttons.append([InlineKeyboardButton(text="🔙 Назад к заказу", callback_data="back_to_summary")])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_order")])
+    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def cancel_keyboard():

@@ -369,8 +369,28 @@ async def promo_confirm_callback(call: CallbackQuery, state: FSMContext):
         return
     data = await state.get_data()
     expires_at = data.get("expires_at")
+    # Получаем регион админа
+    from app.database.crud import get_user_by_tg_id
+    admin_user = await get_user_by_tg_id(call.from_user.id)
+    region = getattr(admin_user, "region", None) if admin_user else None
+    # Карта регионов в таймзоны
+    region_tz = {
+        "🇰🇬 КР": "Asia/Bishkek",
+        "kg": "Asia/Bishkek",
+        "🇰🇿 КЗ": "Asia/Almaty",
+        "kz": "Asia/Almaty",
+        "🇷🇺 РУ": "Europe/Moscow",
+        "ru": "Europe/Moscow",
+    }
+    import pytz
+    tz_name = region_tz.get(region, "Asia/Bishkek")
+    tz = pytz.timezone(tz_name)
     if isinstance(expires_at, datetime):
         expires_at = expires_at.replace(microsecond=0)
+        if expires_at.tzinfo is None:
+            # expires_at введён как локальное время админа, переводим в UTC
+            local_dt = tz.localize(expires_at)
+            expires_at = local_dt.astimezone(pytz.utc)
     async with AsyncSessionLocal() as session:
         promo = PromoCode(
             code=data["code"],

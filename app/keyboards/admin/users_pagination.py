@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 def users_pagination_keyboard(users, page: int, total_pages: int):
     keyboard = []
     for user in users:
-        btn_text = f"@{user.username or '—'} | {user.region or '—'} | {user.role}"
+        btn_text = f"{'@' + user.username if user.username else 'Без username'} | {user.region or '—'} | {user.role}"
         keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=f"user_info:{user.tg_id}")])
     nav_buttons = []
     if page > 1:
@@ -19,7 +19,7 @@ def users_pagination_keyboard(users, page: int, total_pages: int):
 def users_search_keyboard(users):
     keyboard = []
     for user in users:
-        btn_text = f"ID: {user.tg_id} | @{user.username or '—'} | {user.region or '—'} | {user.role}"
+        btn_text = f"ID: {user.tg_id} | {'@' + user.username if user.username else 'Без username'} | {user.region or '—'} | {user.role}"
         keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=f"user_info:{user.tg_id}")])
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="users_page:1")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

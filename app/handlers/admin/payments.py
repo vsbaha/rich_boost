@@ -15,14 +15,22 @@ logger = logging.getLogger(__name__)
 def format_payment_request_text(payment_request, user):
     status = payment_request.status
     status_text = '✅ Принято' if status == 'accepted' else '❌ Отклонено' if status == 'rejected' else '⏳ В ожидании'
+    
+    if user.username:
+        username_str = f"@{user.username}"
+    else:
+        username_str = f'<a href="tg://user?id={user.tg_id}">Связаться</a>'
+    
+    date_str = payment_request.created_at.strftime('%d.%m.%Y %H:%M')
+    
     return (
         f"<b>Заявка на пополнение</b>\n"
         f"ID: <code>{payment_request.id}</code>\n"
-        f"Пользователь: @{user.username or '—'}\n"
+        f"Пользователь: {username_str}\n"
         f"User ID: <code>{user.tg_id}</code>\n"
         f"Регион: {payment_request.region}\n"
         f"Сумма: {payment_request.amount:.2f}\n"
-        f"Дата: {payment_request.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"Дата: {date_str}\n"
         f"Статус: {status_text}"
     )
 

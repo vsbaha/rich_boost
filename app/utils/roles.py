@@ -19,3 +19,4 @@ def role_required(role: str):
 
 admin_only = role_required("admin")
 booster_only = role_required("booster")
+user_only = role_required("user")

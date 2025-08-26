@@ -18,13 +18,16 @@ class User(Base):
     role = Column(String, default="user", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     referrer_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # <-- Новое поле
+    active_discount_percent = Column(Float, default=0)  # Активная скидка в процентах
 
 class BoosterAccount(Base):
     __tablename__ = "booster_accounts"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     username = Column(String) 
-    balance = Column(Float, default=0)
+    balance_kg = Column(Float, default=0)  # Баланс в сомах (КР)
+    balance_kz = Column(Float, default=0)  # Баланс в тенге (КЗ)
+    balance_ru = Column(Float, default=0)  # Баланс в рублях (РУ)
     status = Column(String, default="active") 
 
 class BoosterPayout(Base):
@@ -67,6 +70,7 @@ class PromoActivation(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer)
     promo_id = Column(Integer)
+    promo_code = Column(String)  # Новый уникальный идентификатор промокода
     activated_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class BonusHistory(Base):
@@ -130,3 +134,16 @@ class Order(Base):
     def __repr__(self):
         return f"<Order {self.order_id}>"
 
+class BotSettings(Base):
+    __tablename__ = "bot_settings"
+    
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True, nullable=False)  # Название настройки
+    value = Column(String, nullable=False)             # Значение (JSON строка)
+    description = Column(String, nullable=True)        # Описание настройки
+    category = Column(String, nullable=False)          # Категория (backup, payments, prices, etc.)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<BotSettings {self.key}={self.value}>"

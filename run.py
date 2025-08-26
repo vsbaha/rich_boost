@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from app.config import BOT_TOKEN
 from app.handlers.common import router as common_router
 from app.handlers.admin import router as admin_router
+from app.handlers.admin.currency_admin import router as currency_admin_router
 from app.handlers.user import router as user_router
 from app.handlers.booster import router as booster_router
 from app.database.crud import init_db
@@ -28,9 +29,10 @@ async def main():
     print("=" * 40)
     await init_db()
     bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
-    setup_backup_scheduler(bot)
+    await setup_backup_scheduler(bot)
     dp = Dispatcher()
     dp.include_router(admin_router)
+    dp.include_router(currency_admin_router)
     dp.include_router(user_router)
     dp.include_router(booster_router)
     dp.include_router(common_router)

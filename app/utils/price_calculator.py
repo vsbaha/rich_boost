@@ -1,15 +1,18 @@
-from app.config import RANK_PRICES, BOOST_MULTIPLIERS, COACHING_PRICES, REGION_CURRENCIES, RANKS
+from app.config import REGION_CURRENCIES, RANKS
+from app.utils.settings import SettingsManager
 
-def get_mythic_price(stars, region):
+async def get_mythic_price(stars, region):
     """Возвращает цену за звезду в зависимости от количества звезд"""
+    rank_prices = await SettingsManager.get_setting("RANK_PRICES")
+    
     if stars <= 25:
-        return RANK_PRICES[region]["Мифик0-25"]  # ✅ ИСПРАВЛЕНО
+        return rank_prices[region]["Мифик0-25"]
     elif stars <= 50:
-        return RANK_PRICES[region]["Мифик25-50"]  # ✅ ИСПРАВЛЕНО
+        return rank_prices[region]["Мифик25-50"]
     elif stars <= 100:
-        return RANK_PRICES[region]["Мифик50-100"]  # ✅ ИСПРАВЛЕНО
+        return rank_prices[region]["Мифик50-100"]
     else:
-        return RANK_PRICES[region]["Мифик100+"]  # ✅ ИСПРАВЛЕНО
+        return rank_prices[region]["Мифик100+"]
 
 def get_rank_type(rank):
     """Определяет тип ранга для расчета цены"""
@@ -30,8 +33,9 @@ def get_rank_type(rank):
     else:
         return "Воин"
 
-def calculate_regular_rank_cost(current_rank, target_rank, region):
+async def calculate_regular_rank_cost(current_rank, target_rank, region):
     """Рассчитывает стоимость буста обычных рангов"""
+    rank_prices = await SettingsManager.get_setting("RANK_PRICES")
     current_index = RANKS.index(current_rank)
     target_index = RANKS.index(target_rank)
     
@@ -41,32 +45,34 @@ def calculate_regular_rank_cost(current_rank, target_rank, region):
     for i in range(current_index, target_index):
         rank = RANKS[i + 1]  # Следующий ранг
         rank_type = get_rank_type(rank)
-        price_per_rank = RANK_PRICES[region][rank_type]
+        price_per_rank = rank_prices[region][rank_type]
         total_cost += price_per_rank
     
     return total_cost
 
-def calculate_mythic_cost(current_stars, target_stars, region):
+async def calculate_mythic_cost(current_stars, target_stars, region):
     """Рассчитывает стоимость буста Мифик звезд с учетом ценовых диапазонов"""
+    rank_prices = await SettingsManager.get_setting("RANK_PRICES")
     total_cost = 0
     
     for star in range(current_stars + 1, target_stars + 1):
         if star <= 25:
-            price = RANK_PRICES[region]["Мифик0-25"]
+            price = rank_prices[region]["Мифик0-25"]
         elif star <= 50:
-            price = RANK_PRICES[region]["Мифик25-50"]
+            price = rank_prices[region]["Мифик25-50"]
         elif star <= 100:
-            price = RANK_PRICES[region]["Мифик50-100"]
+            price = rank_prices[region]["Мифик50-100"]
         else:
-            price = RANK_PRICES[region]["Мифик100+"]
+            price = rank_prices[region]["Мифик100+"]
         
         total_cost += price
     
     return total_cost
 
-def calculate_total_order_cost(base_cost, boost_type, region):
+async def calculate_total_order_cost(base_cost, boost_type, region):
     """Рассчитывает финальную стоимость заказа с множителями"""
-    multiplier = BOOST_MULTIPLIERS.get(boost_type, 1.0)
+    boost_multipliers = await SettingsManager.get_setting("BOOST_MULTIPLIERS")
+    multiplier = boost_multipliers.get(boost_type, 1.0)
     total_cost = base_cost * multiplier
     currency = REGION_CURRENCIES[region]
     

@@ -5,10 +5,11 @@ from app.states.user_states import OrderStates
 from app.keyboards.user.order_keyboards import (
     service_catalog_keyboard, regular_boost_type_keyboard, hero_boost_type_keyboard,
     main_ranks_keyboard, rank_gradations_keyboard, target_main_ranks_keyboard, 
-    target_rank_gradations_keyboard, lanes_keyboard, back_keyboard
+    target_rank_gradations_keyboard, lanes_keyboard, back_keyboard, confirm_order_keyboard,
+    edit_order_keyboard
 )
-from app.config import MAIN_RANKS, RANK_GRADATIONS, RANKS, COACHING_PRICES
-from app.database.crud import get_user_by_tg_id, create_order, get_user_by_id, get_users_by_role, update_user_balance_by_region
+from app.config import MAIN_RANKS, RANK_GRADATIONS, RANKS
+from app.database.crud import get_user_by_tg_id, create_order, get_user_by_id, get_users_by_role, update_user_balance_by_region, apply_user_discount, use_user_bonus
 from app.utils.price_calculator import (
     calculate_regular_rank_cost, calculate_mythic_cost, calculate_total_order_cost
 )
@@ -32,18 +33,6 @@ async def delete_bot_message_safe(bot: Bot, chat_id: int, message_id: int):
     except Exception as e:
         logger.debug(f"Не удалось удалить сообщение бота: {e}")
 
-def confirm_order_keyboard():
-    """Клавиатура подтверждения заказа"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_order"),
-            InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_order")
-        ],
-        [
-            InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_order")
-        ]
-    ])
-
 def get_balance_field_from_region(region: str) -> str:
     """Определяет поле баланса по региону"""
     if "🇰🇬" in region or region == "KG":
@@ -66,35 +55,54 @@ async def calculate_order_cost(data):
     service_type = data.get("service_type")
     region = data.get("region")
     
+    # Валидация региона
+    if not region:
+        logger.error("Регион не указан в данных заказа")
+        return 0
+    
     if service_type == "coaching":
+        from app.utils.settings import SettingsManager
+        coaching_prices = await SettingsManager.get_setting("COACHING_PRICES")
+        
+        # Проверяем, есть ли цены для данного региона
+        if region not in coaching_prices:
+            logger.error(f"Цены обучения не найдены для региона: {region}")
+            return 0
+            
         hours = data.get("coaching_hours", 1)
-        return COACHING_PRICES[region] * hours
+        return coaching_prices[region] * hours
     
     current_rank = data.get("current_rank")
     target_rank = data.get("target_rank")
     
     if not current_rank or not target_rank:
+        logger.error(f"Не указаны ранги: current={current_rank}, target={target_rank}")
         return 0
     
     total_cost = 0
     
-    # Буст обычных рангов
-    if current_rank != "Мифик" or target_rank != "Мифик":
-        if current_rank != "Мифик" and target_rank != "Мифик":
-            # Обычный ранг -> обычный ранг
-            total_cost += calculate_regular_rank_cost(current_rank, target_rank, region)
-        elif current_rank != "Мифик" and target_rank == "Мифик":
-            # Обычный ранг -> Мифик
-            total_cost += calculate_regular_rank_cost(current_rank, "Мифик", region)
+    try:
+        # Буст обычных рангов
+        if current_rank != "Мифик" or target_rank != "Мифик":
+            if current_rank != "Мифик" and target_rank != "Мифик":
+                # Обычный ранг -> обычный ранг
+                total_cost += await calculate_regular_rank_cost(current_rank, target_rank, region)
+            elif current_rank != "Мифик" and target_rank == "Мифик":
+                # Обычный ранг -> Мифик
+                total_cost += await calculate_regular_rank_cost(current_rank, "Мифик", region)
+                target_stars = data.get("target_mythic_stars", 0)
+                if target_stars > 0:
+                    total_cost += await calculate_mythic_cost(0, target_stars, region)
+        
+        # Буст внутри Мифик
+        if current_rank == "Мифик" and target_rank == "Мифик":
+            current_stars = data.get("current_mythic_stars", 0)
             target_stars = data.get("target_mythic_stars", 0)
-            if target_stars > 0:
-                total_cost += calculate_mythic_cost(0, target_stars, region)
-    
-    # Буст внутри Мифик
-    if current_rank == "Мифик" and target_rank == "Мифик":
-        current_stars = data.get("current_mythic_stars", 0)
-        target_stars = data.get("target_mythic_stars", 0)
-        total_cost += calculate_mythic_cost(current_stars, target_stars, region)
+            total_cost += await calculate_mythic_cost(current_stars, target_stars, region)
+        
+    except Exception as e:
+        logger.error(f"Ошибка расчета стоимости заказа: {e}")
+        return 0
     
     return total_cost
 
@@ -159,9 +167,28 @@ async def show_order_summary(message: Message, state: FSMContext):
     """Показ итогового заказа для подтверждения"""
     data = await state.get_data()
     
+    # Проверяем наличие обязательных данных
+    if not data.get("region"):
+        await message.answer(
+            "❌ <b>Ошибка</b>\n\n"
+            "Регион не определен. Начните создание заказа заново.",
+            parse_mode="HTML"
+        )
+        await state.clear()
+        return
+    
     # Рассчитываем стоимость
     base_cost = await calculate_order_cost(data)
-    total_cost, currency = calculate_total_order_cost(base_cost, data.get("boost_type"), data.get("region"))
+    
+    if base_cost <= 0:
+        await message.answer(
+            "❌ <b>Ошибка расчета стоимости</b>\n\n"
+            "Проверьте данные заказа и попробуйте снова.",
+            parse_mode="HTML"
+        )
+        return
+    
+    total_cost, currency = await calculate_total_order_cost(base_cost, data.get("boost_type"), data.get("region"))
     
     await state.update_data(base_cost=base_cost, total_cost=total_cost, currency=currency)
     
@@ -331,9 +358,28 @@ async def show_order_summary_callback(call: CallbackQuery, state: FSMContext):
     """Показ итогового заказа для подтверждения (для callback)"""
     data = await state.get_data()
     
+    # Проверяем наличие обязательных данных
+    if not data.get("region"):
+        await call.message.edit_text(
+            "❌ <b>Ошибка</b>\n\n"
+            "Регион не определен. Начните создание заказа заново.",
+            parse_mode="HTML"
+        )
+        await state.clear()
+        return
+    
     # Рассчитываем стоимость
     base_cost = await calculate_order_cost(data)
-    total_cost, currency = calculate_total_order_cost(base_cost, data.get("boost_type"), data.get("region"))
+    
+    if base_cost <= 0:
+        await call.message.edit_text(
+            "❌ <b>Ошибка расчета стоимости</b>\n\n"
+            "Проверьте данные заказа и попробуйте снова.",
+            parse_mode="HTML"
+        )
+        return
+    
+    total_cost, currency = await calculate_total_order_cost(base_cost, data.get("boost_type"), data.get("region"))
     
     await state.update_data(base_cost=base_cost, total_cost=total_cost, currency=currency)
     
@@ -555,7 +601,7 @@ async def handle_game_id(message: Message, state: FSMContext, bot: Bot):
         reply_markup=lanes_keyboard()
     )
     await state.update_data(last_bot_message_id=sent_message.message_id)
-    await state.set_state(OrderStates.entering_lane)
+    await state.set_state(OrderStates.choosing_lane)
     
 @router.callback_query(F.data.startswith("lane:"))
 async def handle_lane_selection(call: CallbackQuery, state: FSMContext):
@@ -683,8 +729,40 @@ async def handle_account_data(message: Message, state: FSMContext, bot: Bot):
     if data.get("last_bot_message_id"):
         await delete_bot_message_safe(bot, message.chat.id, data["last_bot_message_id"])
     
-    logger.info(f"Пользователь @{message.from_user.username} ввел данные аккаунта")
-    await state.update_data(account_data=message.text)
+    # Парсим данные аккаунта
+    account_text = message.text.strip()
+    game_login = None
+    game_password = None
+    
+    # Пытаемся найти логин и пароль в тексте
+    lines = account_text.split('\n')
+    for line in lines:
+        line = line.strip()
+        if line.lower().startswith('логин:') or line.lower().startswith('login:'):
+            game_login = line.split(':', 1)[1].strip()
+        elif line.lower().startswith('пароль:') or line.lower().startswith('password:'):
+            game_password = line.split(':', 1)[1].strip()
+    
+    # Проверяем, что данные введены корректно
+    if not game_login or not game_password:
+        sent_message = await message.answer(
+            "❌ <b>Неверный формат данных!</b>\n\n"
+            "Пожалуйста, введите данные в правильном формате:\n"
+            "<code>Логин: ваш_логин\n"
+            "Пароль: ваш_пароль</code>\n\n"
+            "Попробуйте еще раз:",
+            parse_mode="HTML",
+            reply_markup=back_keyboard("back_to_target_gradation")
+        )
+        await state.update_data(last_bot_message_id=sent_message.message_id)
+        return
+    
+    logger.info(f"Пользователь @{message.from_user.username} ввел данные аккаунта: логин={game_login}")
+    await state.update_data(
+        account_data=account_text,
+        game_login=game_login,
+        game_password=game_password
+    )
     
     # Проверяем, находимся ли мы в режиме редактирования
     if data.get("total_cost"):
@@ -698,6 +776,97 @@ async def handle_account_data(message: Message, state: FSMContext, bot: Bot):
         "Введите дополнительные пожелания или детали заказа (или напишите 'нет'):",
         parse_mode="HTML",
         reply_markup=back_keyboard("back_to_account_data")
+    )
+    await state.update_data(last_bot_message_id=sent_message.message_id)
+    await state.set_state(OrderStates.entering_details)
+
+# === НОВЫЕ ОБРАБОТЧИКИ ДЛЯ РАЗДЕЛЬНОГО ВВОДА ЛОГИНА И ПАРОЛЯ ===
+
+@router.message(OrderStates.entering_game_login)
+async def handle_game_login(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода логина аккаунта"""
+    # Удаляем сообщение пользователя
+    await delete_message_safe(message)
+    
+    # Удаляем предыдущее сообщение бота
+    data = await state.get_data()
+    if data.get("last_bot_message_id"):
+        await delete_bot_message_safe(bot, message.chat.id, data["last_bot_message_id"])
+    
+    game_login = message.text.strip()
+    
+    # Проверяем, что логин не пустой
+    if not game_login:
+        sent_message = await message.answer(
+            "❌ <b>Логин не может быть пустым!</b>\n\n"
+            "Пожалуйста, введите логин от вашего игрового аккаунта:",
+            parse_mode="HTML",
+            reply_markup=back_keyboard("back_to_target_gradation")
+        )
+        await state.update_data(last_bot_message_id=sent_message.message_id)
+        return
+    
+    logger.info(f"Пользователь @{message.from_user.username} ввел логин: {game_login}")
+    await state.update_data(game_login=game_login)
+    
+    # Проверяем, находимся ли мы в режиме редактирования
+    if data.get("total_cost"):
+        # Возвращаемся к сводке
+        await show_order_summary(message, state)
+        return
+    
+    # Переходим к вводу пароля
+    sent_message = await message.answer(
+        "🔐 <b>Пароль аккаунта</b>\n\n"
+        "Введите пароль от вашего игрового аккаунта:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("back_to_game_login")
+    )
+    await state.update_data(last_bot_message_id=sent_message.message_id)
+    await state.set_state(OrderStates.entering_game_password)
+
+@router.message(OrderStates.entering_game_password)
+async def handle_game_password(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода пароля аккаунта"""
+    # Удаляем сообщение пользователя
+    await delete_message_safe(message)
+    
+    # Удаляем предыдущее сообщение бота
+    data = await state.get_data()
+    if data.get("last_bot_message_id"):
+        await delete_bot_message_safe(bot, message.chat.id, data["last_bot_message_id"])
+    
+    game_password = message.text.strip()
+    
+    # Проверяем, что пароль не пустой
+    if not game_password:
+        sent_message = await message.answer(
+            "❌ <b>Пароль не может быть пустым!</b>\n\n"
+            "Пожалуйста, введите пароль от вашего игрового аккаунта:",
+            parse_mode="HTML",
+            reply_markup=back_keyboard("back_to_game_login")
+        )
+        await state.update_data(last_bot_message_id=sent_message.message_id)
+        return
+    
+    logger.info(f"Пользователь @{message.from_user.username} ввел пароль")
+    await state.update_data(
+        game_password=game_password,
+        account_data=f"Логин: {data.get('game_login')}\nПароль: {game_password}"
+    )
+    
+    # Проверяем, находимся ли мы в режиме редактирования
+    if data.get("total_cost"):
+        # Возвращаемся к сводке
+        await show_order_summary(message, state)
+        return
+    
+    # Переходим к дополнительным деталям
+    sent_message = await message.answer(
+        "📝 <b>Дополнительные детали</b>\n\n"
+        "Введите дополнительные пожелания или детали заказа (или напишите 'нет'):",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("back_to_game_password")
     )
     await state.update_data(last_bot_message_id=sent_message.message_id)
     await state.set_state(OrderStates.entering_details)
@@ -762,27 +931,23 @@ async def proceed_to_next_step(obj, state: FSMContext):
     
     # Определяем следующий шаг в зависимости от типа буста
     if boost_type == "account":
-        # Для буста через аккаунт нужны данные аккаунта
+        # Для буста через аккаунт сначала запрашиваем логин
         if isinstance(obj, CallbackQuery):
             await obj.message.edit_text(
-                "🔐 <b>Данные аккаунта</b>\n\n"
-                "Введите данные аккаунта в формате:\n"
-                "<code>Логин: ваш_логин\n"
-                "Пароль: ваш_пароль</code>",
+                "� <b>Логин аккаунта</b>\n\n"
+                "Введите логин от вашего игрового аккаунта:",
                 parse_mode="HTML",
                 reply_markup=back_keyboard("back_to_target_gradation")
             )
         else:
             sent_message = await obj.answer(
-                "🔐 <b>Данные аккаунта</b>\n\n"
-                "Введите данные аккаунта в формате:\n"
-                "<code>Логин: ваш_логин\n"
-                "Пароль: ваш_пароль</code>",
+                "� <b>Логин аккаунта</b>\n\n"
+                "Введите логин от вашего игрового аккаунта:",
                 parse_mode="HTML",
                 reply_markup=back_keyboard("back_to_target_gradation")
             )
             await state.update_data(last_bot_message_id=sent_message.message_id)
-        await state.set_state(OrderStates.entering_account_data)
+        await state.set_state(OrderStates.entering_game_login)
     else:
         # Для остальных типов буста запрашиваем игровой ID
         if isinstance(obj, CallbackQuery):
@@ -807,35 +972,13 @@ async def edit_order(call: CallbackQuery, state: FSMContext):
     """Редактирование заказа"""
     logger.info(f"Пользователь @{call.from_user.username} хочет редактировать заказ")
     
+    data = await state.get_data()
+    
     await call.message.edit_text(
         "✏️ <b>Редактирование заказа</b>\n\n"
-        "Что вы хотите изменить?",
+        "Выберите поле для изменения:",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🎮 Тип услуги", callback_data="edit_service_type"),
-                InlineKeyboardButton(text="🔧 Тип буста", callback_data="edit_boost_type")
-            ],
-            [
-                InlineKeyboardButton(text="📊 Текущий ранг", callback_data="edit_current_rank"),
-                InlineKeyboardButton(text="🎯 Желаемый ранг", callback_data="edit_target_rank")
-            ],
-            [
-                InlineKeyboardButton(text="🎮 Лайн", callback_data="edit_lane"),
-                InlineKeyboardButton(text="🎯 Мейны", callback_data="edit_heroes")
-            ],
-            [
-                InlineKeyboardButton(text="⏰ Время", callback_data="edit_time"),
-                InlineKeyboardButton(text="📞 Контакты", callback_data="edit_contacts")
-            ],
-            [
-                InlineKeyboardButton(text="📝 Детали", callback_data="edit_details"),
-                InlineKeyboardButton(text="🔐 Данные аккаунта", callback_data="edit_account")
-            ],
-            [
-                InlineKeyboardButton(text="🔙 Назад к заказу", callback_data="back_to_summary")
-            ]
-        ])
+        reply_markup=edit_order_keyboard(data)
     )
     await call.answer()
 
@@ -862,7 +1005,7 @@ async def back_to_summary(call: CallbackQuery, state: FSMContext):
     
     # Пересчитываем стоимость на случай изменений
     base_cost = await calculate_order_cost(data)
-    total_cost, currency = calculate_total_order_cost(base_cost, data.get("boost_type"), data.get("region"))
+    total_cost, currency = await calculate_total_order_cost(base_cost, data.get("boost_type"), data.get("region"))
     
     await state.update_data(base_cost=base_cost, total_cost=total_cost, currency=currency)
     
@@ -953,17 +1096,6 @@ async def edit_lane(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 @router.callback_query(F.data == "edit_heroes")
-async def edit_heroes(call: CallbackQuery, state: FSMContext):
-    """Редактирование мейнов"""
-    await call.message.edit_text(
-        "🎯 <b>Мейны</b>\n\n"
-        "Напишите ваших основных героев (мейнов):",
-        parse_mode="HTML",
-        reply_markup=back_keyboard("back_to_summary")
-    )
-    await state.set_state(OrderStates.entering_heroes)
-    await call.answer()
-
 @router.callback_query(F.data == "edit_time")
 async def edit_time(call: CallbackQuery, state: FSMContext):
     """Редактирование времени"""
@@ -989,17 +1121,6 @@ async def edit_contacts(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 @router.callback_query(F.data == "edit_details")
-async def edit_details(call: CallbackQuery, state: FSMContext):
-    """Редактирование деталей"""
-    await call.message.edit_text(
-        "📝 <b>Дополнительные детали</b>\n\n"
-        "Введите дополнительные пожелания или детали заказа (или напишите 'нет'):",
-        parse_mode="HTML",
-        reply_markup=back_keyboard("back_to_summary")
-    )
-    await state.set_state(OrderStates.entering_details)
-    await call.answer()
-
 @router.callback_query(F.data == "edit_account")
 async def edit_account(call: CallbackQuery, state: FSMContext):
     """Редактирование данных аккаунта"""
@@ -1013,77 +1134,204 @@ async def edit_account(call: CallbackQuery, state: FSMContext):
     )
     await state.set_state(OrderStates.entering_account_data)
     await call.answer()
+
+# === НОВЫЕ ОБРАБОТЧИКИ ДЛЯ РЕДАКТИРОВАНИЯ ОТДЕЛЬНЫХ ПОЛЕЙ ===
+
+@router.callback_query(F.data == "edit_login")
+async def edit_login(call: CallbackQuery, state: FSMContext):
+    """Редактирование логина"""
+    await call.message.edit_text(
+        "👤 <b>Логин аккаунта</b>\n\n"
+        "Введите новый логин от вашего игрового аккаунта:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_game_login)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_password")
+async def edit_password(call: CallbackQuery, state: FSMContext):
+    """Редактирование пароля"""
+    await call.message.edit_text(
+        "🔐 <b>Пароль аккаунта</b>\n\n"
+        "Введите новый пароль от вашего игрового аккаунта:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_game_password)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_game_id")
+async def edit_game_id(call: CallbackQuery, state: FSMContext):
+    """Редактирование игрового ID"""
+    await call.message.edit_text(
+        "🆔 <b>Игровой ID</b>\n\n"
+        "Введите новый игровой ID:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_game_id)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_lane")
+async def edit_lane(call: CallbackQuery, state: FSMContext):
+    """Редактирование лайна"""
+    await call.message.edit_text(
+        "🎮 <b>Выбор лайна</b>\n\n"
+        "Выберите новый предпочитаемый лайн:",
+        parse_mode="HTML",
+        reply_markup=lanes_keyboard()
+    )
+    await state.set_state(OrderStates.choosing_lane)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_heroes")
+async def edit_heroes(call: CallbackQuery, state: FSMContext):
+    """Редактирование мейнов"""
+    await call.message.edit_text(
+        "🎭 <b>Мейны</b>\n\n"
+        "Напишите ваших новых основных героев (мейнов):",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_heroes)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_time")
+async def edit_time(call: CallbackQuery, state: FSMContext):
+    """Редактирование времени"""
+    await call.message.edit_text(
+        "⏰ <b>Удобное время</b>\n\n"
+        "Укажите новое удобное время для игры:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_preferred_time)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_contact")
+async def edit_contact(call: CallbackQuery, state: FSMContext):
+    """Редактирование контактов"""
+    await call.message.edit_text(
+        "📞 <b>Контактная информация</b>\n\n"
+        "Введите новые контактные данные:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_contact_info)
+    await call.answer()
+
+@router.callback_query(F.data == "edit_details")
+async def edit_details(call: CallbackQuery, state: FSMContext):
+    """Редактирование деталей"""
+    await call.message.edit_text(
+        "📝 <b>Дополнительные детали</b>\n\n"
+        "Введите новые дополнительные пожелания или детали заказа:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("edit_order")
+    )
+    await state.set_state(OrderStates.entering_details)
+    await call.answer()
     
-@router.callback_query(F.data == "confirm_order")
-async def confirm_order(call: CallbackQuery, state: FSMContext, bot: Bot):
-    """Подтверждение заказа"""
-    logger.info(f"Пользователь @{call.from_user.username} подтвердил заказ")
+async def show_order_confirmation(call, state: FSMContext):
+    """Показ подтверждения заказа"""
+    data = await state.get_data()
+    total_cost = data.get("total_cost", 0)
+    currency = data.get("currency", "сом")
+    
+    # Формируем текст заказа
+    summary_text = await format_order_summary(data, total_cost, currency)
+    
+    await call.message.edit_text(
+        summary_text,
+        parse_mode="HTML",
+        reply_markup=confirm_order_keyboard()
+    )
+    
+    await state.set_state(OrderStates.confirming_order)
+
+
+@router.callback_query(F.data.startswith("confirm_payment:"))
+async def confirm_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Обработка подтвержденной оплаты и создание заказа"""
+    payment_method = call.data.split(":")[1]
+    logger.info(f"Пользователь @{call.from_user.username} подтвердил оплату методом {payment_method}")
     
     data = await state.get_data()
     user_id = data.get("user_id")
-    total_cost = data.get("total_cost")
+    final_cost = data.get("final_cost", 0)
     region = data.get("region")
+    currency = data.get("currency", "сом")
+    discount_percent = data.get("discount_percent", 0)
     
-    # Логируем данные состояния для отладки
-    logger.info(f"Данные состояния: user_id={user_id}, region={region}, total_cost={total_cost}")
-    
-    # Проверяем что user_id существует
-    if not user_id:
-        await call.message.edit_text(
-            "❌ <b>Ошибка</b>\n\n"
-            "Пользователь не найден. Начните создание заказа заново.",
-            parse_mode="HTML"
-        )
-        await state.clear()
+    # Проверяем наличие необходимых данных
+    if not user_id or final_cost <= 0:
+        await call.answer("Ошибка: недостаточно данных", show_alert=True)
         return
     
-    # Проверяем баланс пользователя
+    # Получаем пользователя
     user = await get_user_by_id(user_id)
-    
     if not user:
-        await call.message.edit_text(
-            "❌ <b>Ошибка</b>\n\n"
-            "Пользователь не найден в базе данных. Начните создание заказа заново.",
-            parse_mode="HTML"
-        )
-        await state.clear()
-        return
-    
-    # Логируем данные пользователя
-    logger.info(f"Пользователь из БД: ID={user.id}, region={region}, balance_kg={user.balance_kg}, balance_kz={user.balance_kz}, balance_ru={user.balance_ru}")
-    
-    # Получаем баланс в зависимости от региона (с проверкой флагов)
-    balance_field = get_balance_field_from_region(region)
-    user_balance = get_user_balance_by_region(user, region)
-    
-    # Логируем баланс
-    logger.info(f"Выбранный регион: {region}, поле баланса: {balance_field}, баланс: {user_balance}")
-    
-    # Проверяем что total_cost не None
-    if total_cost is None or total_cost <= 0:
-        await call.message.edit_text(
-            "❌ <b>Ошибка расчета стоимости</b>\n\n"
-            "Начните создание заказа заново.",
-            parse_mode="HTML"
-        )
-        await state.clear()
-        return
-    
-    if user_balance < total_cost:
-        await call.message.edit_text(
-            f"❌ <b>Недостаточно средств</b>\n\n"
-            f"💰 <b>На балансе:</b> {user_balance:.0f} {data.get('currency', 'сом')}\n"
-            f"💳 <b>Необходимо:</b> {total_cost:.0f} {data.get('currency', 'сом')}\n"
-            f"💵 <b>Не хватает:</b> {total_cost - user_balance:.0f} {data.get('currency', 'сом')}\n\n"
-            f"Пополните баланс и попробуйте снова.",
-            parse_mode="HTML"
-        )
-        await call.answer("Недостаточно средств!")
+        await call.answer("Пользователь не найден", show_alert=True)
         return
     
     try:
-        # Снимаем деньги с правильного поля баланса
-        await update_user_balance_by_region(user_id, balance_field, -total_cost)
+        # Обрабатываем скидку если есть
+        if discount_percent > 0:
+            await apply_user_discount(user_id)
+        
+        # Обрабатываем оплату в зависимости от метода
+        if payment_method == "balance":
+            # Полная оплата с баланса
+            balance_field = get_balance_field_from_region(region)
+            await update_user_balance_by_region(user_id, balance_field, -final_cost)
+            payment_desc = f"Оплачено с баланса: {final_cost:.0f} {currency}"
+            
+        elif payment_method == "bonus":
+            # Полная оплата бонусами
+            success, message = await use_user_bonus(user_id, final_cost, currency)
+            if not success:
+                await call.answer(f"Ошибка оплаты: {message}", show_alert=True)
+                return
+            payment_desc = f"Оплачено бонусами: {final_cost:.0f} {currency}"
+            
+        elif payment_method == "mixed":
+            # Смешанная оплата
+            bonus_amount = data.get("bonus_amount", 0)
+            balance_amount = data.get("balance_amount", 0)
+            
+            # Списываем бонусы
+            success, message = await use_user_bonus(user_id, bonus_amount, currency)
+            if not success:
+                await call.answer(f"Ошибка списания бонусов: {message}", show_alert=True)
+                return
+            
+            # Списываем с баланса
+            balance_field = get_balance_field_from_region(region)
+            await update_user_balance_by_region(user_id, balance_field, -balance_amount)
+            payment_desc = f"Оплачено: {bonus_amount:.0f} {currency} бонусами + {balance_amount:.0f} {currency} с баланса"
+            
+        elif payment_method == "partial_bonus":
+            # Частичная оплата бонусами
+            bonus_amount = data.get("bonus_amount", 0)
+            balance_amount = data.get("balance_amount", 0)
+            
+            if bonus_amount > 0:
+                success, message = await use_user_bonus(user_id, bonus_amount, currency)
+                if not success:
+                    await call.answer(f"Ошибка списания бонусов: {message}", show_alert=True)
+                    return
+            
+            if balance_amount > 0:
+                balance_field = get_balance_field_from_region(region)
+                await update_user_balance_by_region(user_id, balance_field, -balance_amount)
+            
+            if bonus_amount > 0 and balance_amount > 0:
+                payment_desc = f"Оплачено: {bonus_amount:.0f} {currency} бонусами + {balance_amount:.0f} {currency} с баланса"
+            elif bonus_amount > 0:
+                payment_desc = f"Оплачено бонусами: {bonus_amount:.0f} {currency}"
+            else:
+                payment_desc = f"Оплачено с баланса: {balance_amount:.0f} {currency}"
         
         # Подготавливаем данные для создания заказа
         order_data = {
@@ -1100,11 +1348,14 @@ async def confirm_order(call: CallbackQuery, state: FSMContext, bot: Bot):
             "lane": data.get("lane"),
             "heroes_mains": data.get("heroes_mains"),
             "game_id": data.get("game_id"),
+            "game_login": data.get("game_login"),
+            "game_password": data.get("game_password"),
             "preferred_time": data.get("preferred_time"),
             "contact_info": data.get("contact_info"),
             "account_data": data.get("account_data"),
             "details": data.get("details"),
-            "total_cost": total_cost,
+            "total_cost": final_cost,
+            "currency": currency,
             "status": "pending"
         }
         
@@ -1117,37 +1368,60 @@ async def confirm_order(call: CallbackQuery, state: FSMContext, bot: Bot):
         # Отправляем уведомление админу
         await send_admin_notification(bot, order, user)
         
+        # Формируем сообщение об успехе
+        success_text = f"✅ <b>Заказ создан!</b>\n\n"
+        success_text += f"🆔 <b>Номер заказа:</b> <code>{order.order_id}</code>\n"
+        success_text += f"💰 <b>Стоимость:</b> {final_cost:.0f} {currency}\n"
+        
+        if discount_percent > 0:
+            original_cost = data.get("original_cost", final_cost)
+            success_text += f"🎁 <b>Применена скидка:</b> {discount_percent}% (-{original_cost - final_cost:.0f} {currency})\n"
+        
+        success_text += f"💳 <b>Оплата:</b> {payment_desc}\n"
+        success_text += f"📊 <b>Статус:</b> Ожидает подтверждения\n\n"
+        success_text += f"Ваш заказ отправлен на рассмотрение.\n"
+        success_text += f"Ожидайте подтверждения от админа в ближайшее время\n\n"
+        success_text += f"📦 Посмотреть заказ можно в разделе «Мои заказы»"
+        
         await call.message.edit_text(
-            f"✅ <b>Заказ создан!</b>\n\n"
-            f"🆔 <b>Номер заказа:</b> <code>{order.order_id}</code>\n"
-            f"💰 <b>Списано с баланса:</b> {total_cost:.0f} {data.get('currency', 'сом')}\n"
-            f"💳 <b>Остаток баланса:</b> {user_balance - total_cost:.0f} {data.get('currency', 'сом')}\n"
-            f"📊 <b>Статус:</b> Ожидает подтверждения\n\n"
-            f"Ваш заказ отправлен на рассмотрение.\n"
-            f"Ожидайте подтверждения от админа в ближайшее время\n\n"
-            f"📦 Посмотреть заказ можно в разделе «Мои заказы»",
+            success_text,
             parse_mode="HTML"
         )
         
-        logger.info(f"Заказ {order.order_id} создан пользователем @{call.from_user.username}")
+        logger.info(f"Заказ {order.order_id} создан пользователем @{call.from_user.username} с оплатой {payment_method}")
         
     except Exception as e:
         logger.error(f"Ошибка создания заказа: {e}")
-        # Возвращаем деньги на правильное поле
+        
+        # Пытаемся вернуть средства при ошибке
         try:
-            await update_user_balance_by_region(user_id, balance_field, total_cost)
+            if payment_method == "balance":
+                balance_field = get_balance_field_from_region(region)
+                await update_user_balance_by_region(user_id, balance_field, final_cost)
+            elif payment_method in ["bonus", "mixed", "partial_bonus"]:
+                # Для бонусов возврат сложнее, но можно добавить логику восстановления
+                pass
         except Exception as refund_error:
             logger.error(f"Ошибка возврата средств: {refund_error}")
         
         await call.message.edit_text(
             "❌ <b>Ошибка создания заказа</b>\n\n"
             "Попробуйте позже или обратитесь к администратору.\n"
-            "Средства возвращены на баланс.",
+            "При ошибке оплаты средства будут возвращены.",
             parse_mode="HTML"
         )
     
     await state.clear()
     await call.answer("Заказ создан!")
+@router.callback_query(F.data == "confirm_order")
+async def confirm_order(call: CallbackQuery, state: FSMContext):
+    """Переадресация на новую систему оплаты"""
+    logger.info(f"Пользователь @{call.from_user.username} пытается подтвердить заказ")
+    await call.answer("Теперь нужно выбрать способ оплаты!", show_alert=True)
+    
+    # Переадресуем на выбор способа оплаты
+    from app.handlers.user.payment import choose_payment_method
+    await choose_payment_method(call, state)
 
 async def send_admin_notification(bot: Bot, order, user):
     """Отправка уведомления админу о новом заказе"""
@@ -1175,7 +1449,10 @@ async def send_admin_notification(bot: Bot, order, user):
     
     text = f"🚨 <b>НОВЫЙ ЗАКАЗ!</b>\n\n"
     text += f"🆔 <b>ID заказа:</b> <code>{order.order_id}</code>\n"
-    text += f"👤 <b>Пользователь:</b> @{user.username or 'без username'} ({user.tg_id})\n"
+    if user.username:
+        text += f"👤 <b>Пользователь:</b> @{user.username} ({user.tg_id})\n"
+    else:
+        text += f"👤 <b>Пользователь:</b> <a href='tg://user?id={user.tg_id}'>Связаться</a> ({user.tg_id})\n"
     text += f"🌍 <b>Регион:</b> {user.region}\n\n"
     
     text += f"🛒 <b>Услуга:</b> {service_names.get(order.service_type, 'Неизвестно')}\n"
@@ -1213,15 +1490,8 @@ async def send_admin_notification(bot: Bot, order, user):
     text += f"\n💰 <b>Стоимость:</b> {order.total_cost:.0f} сом"
     
     # Создаем клавиатуру для админа
-    admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Принять", callback_data=f"admin_accept_order:{order.order_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_order:{order.order_id}")
-        ],
-        [
-            InlineKeyboardButton(text="📋 Подробнее", callback_data=f"admin_order_details:{order.order_id}")
-        ]
-    ])
+    from app.keyboards.admin.order_management import admin_order_notification_keyboard
+    admin_keyboard = admin_order_notification_keyboard(order.order_id)
     
     # Отправляем всем админам из базы данных
     sent_count = 0
@@ -1392,4 +1662,30 @@ async def back_to_account_data(call: CallbackQuery, state: FSMContext):
         reply_markup=back_keyboard("back_to_target_gradation")
     )
     await state.set_state(OrderStates.entering_account_data)
+    await call.answer()
+
+# === НОВЫЕ ОБРАБОТЧИКИ КНОПОК "НАЗАД" ===
+
+@router.callback_query(F.data == "back_to_game_login")
+async def back_to_game_login(call: CallbackQuery, state: FSMContext):
+    """Возврат к вводу логина"""
+    await call.message.edit_text(
+        "👤 <b>Логин аккаунта</b>\n\n"
+        "Введите логин от вашего игрового аккаунта:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("back_to_target_gradation")
+    )
+    await state.set_state(OrderStates.entering_game_login)
+    await call.answer()
+
+@router.callback_query(F.data == "back_to_game_password")
+async def back_to_game_password(call: CallbackQuery, state: FSMContext):
+    """Возврат к вводу пароля"""
+    await call.message.edit_text(
+        "🔐 <b>Пароль аккаунта</b>\n\n"
+        "Введите пароль от вашего игрового аккаунта:",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("back_to_game_login")
+    )
+    await state.set_state(OrderStates.entering_game_password)
     await call.answer()

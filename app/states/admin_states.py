@@ -6,6 +6,11 @@ class AdminStates(StatesGroup):
     waiting_for_bonus = State()
     waiting_for_broadcast = State()
     waiting_for_boosters_broadcast = State()
+    waiting_for_setting_value = State()  # Новое состояние для настроек
+    searching_order = State()  # Поиск заказа
+    changing_price = State()  # Изменение цены
+    adding_comment = State()  # Добавление комментария
+    rejecting_completion = State()  # Отклонение завершения заказа
     
 class SearchStates(StatesGroup):
     waiting_for_id = State()

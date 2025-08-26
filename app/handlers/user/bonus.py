@@ -66,7 +66,7 @@ async def get_bonuses_text_and_keyboard(user):
         referrals_text = "\n\n<b>Ваши приглашённые:</b>"
         for r in referrals:
             reg_date = r.created_at.strftime('%d.%m.%Y')
-            username = f"@{r.username}" if r.username else f"<code>{r.tg_id}</code>"
+            username = f"@{r.username}" if r.username else f"<a href='tg://user?id={r.tg_id}'>Пользователь</a>"
             referrals_text += f"\n• {username} ({reg_date})"
     else:
         referrals_text = "\n\n<b>Ваши приглашённые:</b>\n—"

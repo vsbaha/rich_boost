@@ -27,7 +27,9 @@ class OrderStates(StatesGroup):
     entering_target_mythic = State()    # Ввод желаемых звезд Mythic
     
     # Данные для буста
-    entering_account_data = State()     # Ввод данных аккаунта
+    entering_account_data = State()     # Ввод данных аккаунта (deprecated)
+    entering_game_login = State()       # Ввод логина аккаунта
+    entering_game_password = State()    # Ввод пароля аккаунта
     entering_game_id = State()          # Ввод игрового ID
     choosing_lane = State()             # Выбор лайна
     entering_heroes = State()           # Ввод мейнов
@@ -42,3 +44,7 @@ class OrderStates(StatesGroup):
     entering_details = State()          # Дополнительные детали
     confirming_order = State()          # Подтверждение заказа
     editing_order = State()             # Редактирование заказа
+    
+    # Оплата заказа
+    payment_selection = State()         # Выбор способа оплаты (баланс/бонусы)
+    bonus_amount_input = State()        # Ввод суммы бонусов к использованию

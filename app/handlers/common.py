@@ -65,9 +65,11 @@ async def cmd_start(message: Message, state: FSMContext):
             referrer = await get_user_by_id(referrer_id)  # функция, возвращающая User по id
             if referrer:
                 try:
+                    user_link = f"@{message.from_user.username}" if message.from_user.username else f"<a href='tg://user?id={message.from_user.id}'>Новый пользователь</a>"
                     await bot.send_message(
                         referrer.tg_id,
-                        f"По вашей ссылке зарегистрировался новый пользователь: @{message.from_user.username or message.from_user.id}"
+                        f"По вашей ссылке зарегистрировался новый пользователь: {user_link}",
+                        parse_mode="HTML"
                     )
                 except Exception:
                     pass

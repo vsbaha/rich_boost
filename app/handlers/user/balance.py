@@ -7,7 +7,8 @@ from aiogram.fsm.context import FSMContext
 from app.utils.currency import get_currency, get_active_balance
 from app.states.user_states import TopUpStates
 from app.utils.payments import notify_admins_about_payment
-from app.config import MIN_TOPUP_KGS, MIN_TOPUP_KZT, MIN_TOPUP_RUB  # добавь в config.py минимальные суммы для каждого региона
+from app.config import REGION_CURRENCIES
+from app.utils.settings import SettingsManager
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -57,11 +58,15 @@ async def user_balance(message: Message):
 async def start_topup(call: CallbackQuery, state: FSMContext):
     logger.info(f"Пользователь @{call.from_user.username or 'без username'} начал пополнение баланса")
     user = await get_user_by_tg_id(call.from_user.id)
-    min_amount = {
-        "🇰🇬 КР": MIN_TOPUP_KGS,
-        "🇰🇿 КЗ": MIN_TOPUP_KZT,
-        "🇷🇺 РУ": MIN_TOPUP_RUB,
-    }.get(user.region, 0)
+    
+    # Получаем минимальные суммы из настроек по региону
+    if user.region == "🇰🇬 КР":
+        min_amount = await SettingsManager.get_setting("MIN_TOPUP_KGS")
+    elif user.region == "🇰🇿 КЗ":
+        min_amount = await SettingsManager.get_setting("MIN_TOPUP_KZT")
+    else:  # "🇷🇺 РУ"
+        min_amount = await SettingsManager.get_setting("MIN_TOPUP_RUB")
+    
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="user_balance_back")]

@@ -34,7 +34,7 @@ async def get_profile_text(user, balance, bonus, currency):
     return (
         f"<b>Ваш профиль</b>\n"
         f"ID: <code>{user.tg_id}</code>\n"
-        f"Username: @{user.username or '—'}\n"
+        f"Username: {'@' + user.username if user.username else '—'}\n"
         f"Регион: {user.region or '—'}\n"
         f"Баланс: {balance:.2f} {currency}\n"
         f"Бонусный баланс: {bonus:.2f} {currency}\n"
