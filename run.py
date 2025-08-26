@@ -38,8 +38,8 @@ async def main():
     dp.include_router(common_router)
     dp.message.middleware(UserUpdateMiddleware())
     dp.message.middleware(BanCheckMiddleware())
-    dp.message.middleware(AntiSpamMiddleware(rate_limit=1.0))  # 1 сообщение в секунду
-    await dp.start_polling(bot)
+    dp.message.middleware(AntiSpamMiddleware(rate_limit=1.0))
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
     try:

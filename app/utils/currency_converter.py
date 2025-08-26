@@ -25,7 +25,7 @@ class CurrencyConverter:
         # Базовые курсы (fallback если API не работает)
         self.fallback_rates = {
             "KGS_to_KZT": 5.5,  # 1 сом = 5.5 тенге
-            "KGS_to_RUB": 1.2,  # 1 сом = 1.2 рубля
+            "KGS_to_RUB": 1.1,  # 1 сом = 1.1 рубля
             "KZT_to_RUB": 0.22, # 1 тенге = 0.22 рубля
         }
     

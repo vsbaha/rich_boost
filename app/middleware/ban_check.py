@@ -7,6 +7,6 @@ class BanCheckMiddleware(BaseMiddleware):
         if isinstance(event, Message):
             user = await get_user_by_tg_id(event.from_user.id)
             if user and user.role == "banned":
-                await event.answer("⛔️ Ваш аккаунт заблокирован. Обратитесь в поддержку.")
+                await event.answer("⛔️ Ваш аккаунт заблокирован. Обратитесь в поддержку. @kkm1s")
                 return  # Не передаём управление дальше
         return await handler(event, data)
