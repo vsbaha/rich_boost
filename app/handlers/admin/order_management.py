@@ -849,34 +849,30 @@ async def admin_approve_completion(call: CallbackQuery):
     except:
         booster_percent = 70  # По умолчанию 70%
     
-    # Начисляем бустеру указанный процент от стоимости заказа
-    booster_amount = order.total_cost * (booster_percent / 100)
-    
-    # Определяем валюту выплаты
+    # Считаем комиссию в валюте заказа
+    booster_commission_local = order.total_cost * (booster_percent / 100)
     order_currency = currency  # Валюта заказа
-    booster_region_currencies = {
-        "🇰🇬 КР": "сом",
-        "🇰🇿 КЗ": "тенге", 
-        "🇷🇺 РУ": "руб."
-    }
-    booster_currency = booster_region_currencies.get(booster.region, "руб.")
-    
-    # Если валюты отличаются, конвертируем
-    final_amount = booster_amount
-    conversion_note = ""
-    
-    if order_currency != booster_currency:
+    # Логируем для отладки
+    logger.info(f"[BOOSTER PAYOUT] order_id={order_id}, total_cost={order.total_cost}, currency={order_currency}, commission_local={booster_commission_local}")
+    # Всегда конвертируем, если валюта не USD
+    if order_currency != "USD":
         try:
             from app.utils.currency_converter import convert_booster_balance
-            final_amount = await convert_booster_balance(booster_amount, order_currency, booster_currency)
-            conversion_note = f"\n💱 Конвертировано: {booster_amount:.0f} {order_currency} → {final_amount:.0f} {booster_currency}"
+            booster_amount_usd = await convert_booster_balance(booster_commission_local, order_currency, "USD")
+            conversion_note = f"\n💱 Конвертировано: {booster_amount_usd:.2f} USD"
+            logger.info(f"[BOOSTER PAYOUT] Converted {booster_commission_local} {order_currency} -> {booster_amount_usd} USD")
         except Exception as e:
-            logger.error(f"Ошибка конвертации валюты: {e}")
-            # В случае ошибки используем валюту заказа
-            booster_currency = order_currency
-            final_amount = booster_amount
-    
-    await update_booster_balance(order.assigned_booster_id, final_amount, booster_currency)
+            logger.error(f"Ошибка конвертации валюты в USD: {e}")
+            booster_amount_usd = 0
+            conversion_note = ""
+    else:
+        # Если валюта USD, но сумма подозрительно большая, логируем
+        if booster_commission_local > 1000:
+            logger.warning(f"[BOOSTER PAYOUT] Unusually large USD commission: {booster_commission_local} USD for order {order_id}")
+        booster_amount_usd = booster_commission_local
+        conversion_note = ""
+    # Кредитуем только balance_usd
+    await update_booster_balance(order.assigned_booster_id, booster_amount_usd, currency="USD")
     
     # TODO: Начисляем клиенту кешбэк (настройка в админ-панели)
     # cashback_percent = await get_setting("cashback_percent", 5)  # 5% по умолчанию
@@ -887,20 +883,33 @@ async def admin_approve_completion(call: CallbackQuery):
     booster_str = f"@{booster.username}" if booster.username else f'<a href="tg://user?id={booster.tg_id}">Связаться</a>'
     client_str = f"@{client.username}" if client.username else f'<a href="tg://user?id={client.tg_id}">Связаться</a>'
     
-    await call.message.edit_caption(
-        caption=f"✅ <b>Заказ {order_id} одобрен!</b>\n\n"
-               f"Бустер: {booster_str} ({booster.region})\n"
-               f"Клиент: {client_str}\n"
-               f"Стоимость: {order.total_cost:.0f} {currency}\n\n"
-               f"💰 Бустеру начислено: {final_amount:.0f} {booster_currency} ({booster_percent}%)"
-               f"{conversion_note}\n"
-               f"🎁 Клиенту начислен кешбэк\n\n"
-               f"Все участники уведомлены!",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Детали заказа", callback_data=f"admin_order_details:{order_id}")]
-        ])
+    # Формируем текст для сообщения
+    result_text = (
+        f"✅ <b>Заказ {order_id} одобрен!</b>\n\n"
+        f"Бустер: {booster_str} ({booster.region})\n"
+        f"Клиент: {client_str}\n"
+        f"Стоимость: {order.total_cost:.0f} {currency}\n\n"
+        f"💰 Бустеру начислено: {booster_amount_usd:.2f} USD ({booster_percent}%)"
+        f"{conversion_note}\n"
+        f"🎁 Клиенту начислен кешбэк\n\n"
+        f"Все участники уведомлены!"
     )
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Детали заказа", callback_data=f"admin_order_details:{order_id}")]
+    ])
+    # Проверяем, является ли сообщение медиа
+    if call.message.content_type in ("photo", "video", "document", "audio"):
+        await call.message.edit_caption(
+            caption=result_text,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+    else:
+        await call.message.edit_text(
+            result_text,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
     
     # Уведомляем бустера
     try:
@@ -908,7 +917,7 @@ async def admin_approve_completion(call: CallbackQuery):
             booster.tg_id,
             f"🎉 <b>Ваш заказ {order_id} одобрен!</b>\n\n"
             f"Заказ успешно завершен и проверен администрацией.\n"
-            f"💰 Вам начислено: <b>{booster_amount:.0f} {currency}</b> ({booster_percent}%)\n\n"
+            f"💰 Вам начислено: <b>{booster_amount_usd:.2f} USD</b> ({booster_percent}%)\n\n"
             f"Спасибо за качественную работу!",
             parse_mode="HTML"
         )

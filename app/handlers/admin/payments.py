@@ -61,6 +61,48 @@ async def admin_all_topup_requests(message: Message):
     await message.answer(text, parse_mode="HTML", reply_markup=filter_keyboard)
     logger.info("Показано меню фильтрации заявок")
 
+@router.message(F.text == "💰 Запросы выплат")
+@admin_only
+async def handle_payout_requests_menu(message: Message):
+    """Обработчик кнопки 'Запросы выплат' в админ-меню"""
+    from app.database.crud import get_payout_requests
+    from app.keyboards.admin.payout_keyboards import get_admin_payout_list_keyboard
+    
+    pending_requests = await get_payout_requests(status="pending", limit=10)
+    
+    if not pending_requests:
+        text = "📋 <b>Запросы на выплату</b>\n\n"
+        text += "Нет ожидающих запросов на выплату."
+        
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=get_admin_payout_list_keyboard([])
+        )
+        return
+        
+    text = f"📋 <b>Запросы на выплату ({len(pending_requests)})</b>\n\n"
+    
+    for req in pending_requests:
+        from app.utils.currency import get_currency_info
+        from app.database.crud import get_booster_account_by_id
+        
+        # Получаем информацию о бустере
+        booster_account = await get_booster_account_by_id(req.booster_account_id)
+        currency_info = get_currency_info(req.currency)
+        
+        text += f"🔸 Запрос #{req.id}\n"
+        if booster_account:
+            text += f"👤 @{booster_account.username or 'неизвестно'}\n"
+        text += f"💰 {req.amount:.2f} {currency_info['symbol']}\n"
+        text += f"📅 {req.created_at.strftime('%d.%m.%Y %H:%M')}\n\n"
+    
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_admin_payout_list_keyboard(pending_requests)
+    )
+
 @router.callback_query(F.data.startswith("filter_topups:"))
 @admin_only
 async def filter_topup_requests(call: CallbackQuery):

@@ -133,10 +133,7 @@ def booster_order_details_keyboard(order_id, status):
         keyboard.append([
             InlineKeyboardButton(text="⏳ Ожидает проверки", callback_data="noop")
         ])
-    elif status == "completed":
-        keyboard.append([
-            InlineKeyboardButton(text="✅ Заказ завершен", callback_data="noop")
-        ])
+    # Не показываем кнопку для завершенных заказов
     elif status == "paused":
         keyboard.append([
             InlineKeyboardButton(text="⏸️ Заказ приостановлен", callback_data="noop")

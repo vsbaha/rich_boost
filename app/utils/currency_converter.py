@@ -19,7 +19,8 @@ class CurrencyConverter:
         self.currency_codes = {
             "сом": "KGS",
             "тенге": "KZT", 
-            "руб.": "RUB"
+            "руб.": "RUB",
+            "USD": "USD"
         }
         
         # Базовые курсы (fallback если API не работает)
@@ -90,27 +91,92 @@ class CurrencyConverter:
         if from_currency == to_currency:
             return amount
         
-        # Получаем коды валют
-        from_code = self.currency_codes.get(from_currency)
-        to_code = self.currency_codes.get(to_currency)
+        # Проверяем, являются ли входные параметры уже кодами валют или названиями
+        valid_codes = ["KGS", "KZT", "RUB", "USD"]
         
-        if not from_code or not to_code:
-            logger.error(f"Неизвестная валюта: {from_currency} -> {to_currency}")
+        # Если переданы коды валют, используем их напрямую
+        if from_currency in valid_codes and to_currency in valid_codes:
+            from_code = from_currency
+            to_code = to_currency
+        else:
+            # Иначе получаем коды валют из названий
+            from_code = self.currency_codes.get(from_currency)
+            to_code = self.currency_codes.get(to_currency)
+            
+            if not from_code or not to_code:
+                logger.error(f"Неизвестная валюта: {from_currency} -> {to_currency}")
+                return amount
+        
+        try:
+            # Если одна из валют USD, используем курсы из API
+            if from_code == "USD":
+                # USD -> другая валюта
+                # Получаем актуальные курсы через API
+                async with aiohttp.ClientSession() as session:
+                    url = "https://api.exchangerate-api.com/v4/latest/USD"
+                    async with session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            rates = data.get('rates', {})
+                            rate = rates.get(to_code)
+                            if rate:
+                                converted_amount = amount * rate
+                                logger.info(f"Конвертация: {amount} USD = {converted_amount:.2f} {to_currency} (курс: {rate:.4f})")
+                                return round(converted_amount, 2)
+                
+                # Если API недоступен, используем fallback курсы
+                fallback_rates = {
+                    "KGS": 84.0,  # 1 USD = 84 сом
+                    "KZT": 460.0,  # 1 USD = 460 тенге  
+                    "RUB": 95.0    # 1 USD = 95 рублей
+                }
+                rate = fallback_rates.get(to_code, 1.0)
+                converted_amount = amount * rate
+                logger.info(f"Конвертация (fallback): {amount} USD = {converted_amount:.2f} {to_currency} (курс: {rate:.4f})")
+                return round(converted_amount, 2)
+                
+            elif to_code == "USD":
+                # Другая валюта -> USD
+                async with aiohttp.ClientSession() as session:
+                    url = "https://api.exchangerate-api.com/v4/latest/USD"
+                    async with session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            rates = data.get('rates', {})
+                            rate = rates.get(from_code)
+                            if rate:
+                                converted_amount = amount / rate
+                                logger.info(f"Конвертация: {amount} {from_currency} = {converted_amount:.2f} USD (курс: {rate:.4f})")
+                                return round(converted_amount, 2)
+                
+                # Если API недоступен, используем fallback курсы
+                fallback_rates = {
+                    "KGS": 84.0,  # 84 сом = 1 USD
+                    "KZT": 460.0,  # 460 тенге = 1 USD
+                    "RUB": 95.0    # 95 рублей = 1 USD
+                }
+                rate = fallback_rates.get(from_code, 1.0)
+                converted_amount = amount / rate
+                logger.info(f"Конвертация (fallback): {amount} {from_currency} = {converted_amount:.2f} USD (курс: {rate:.4f})")
+                return round(converted_amount, 2)
+            
+            # Получаем актуальные курсы для конвертации между локальными валютами
+            rates = await self.get_cached_rates()
+            
+            # Формируем ключ для поиска курса между локальными валютами
+            rate_key = f"{from_code}_to_{to_code}"
+            
+            if rate_key in rates:
+                converted_amount = amount * rates[rate_key]
+                logger.info(f"Конвертация: {amount} {from_currency} = {converted_amount:.2f} {to_currency} (курс: {rates[rate_key]:.4f})")
+                return round(converted_amount, 2)
+            
+            logger.error(f"Курс {rate_key} не найден")
             return amount
-        
-        # Получаем актуальные курсы
-        rates = await self.get_cached_rates()
-        
-        # Формируем ключ для поиска курса
-        rate_key = f"{from_code}_to_{to_code}"
-        
-        if rate_key in rates:
-            converted_amount = amount * rates[rate_key]
-            logger.info(f"Конвертация: {amount} {from_currency} = {converted_amount:.2f} {to_currency} (курс: {rates[rate_key]:.4f})")
-            return round(converted_amount, 2)
-        
-        logger.error(f"Курс {rate_key} не найден")
-        return amount
+            
+        except Exception as e:
+            logger.error(f"Ошибка при конвертации {from_currency} -> {to_currency}: {e}")
+            return amount
     
     def get_currency_symbol(self, currency: str) -> str:
         """Возвращает символ валюты"""
@@ -126,7 +192,14 @@ converter = CurrencyConverter()
 
 async def convert_booster_balance(amount: float, from_currency: str, to_currency: str) -> float:
     """Удобная функция для конвертации баланса бустера"""
-    return await converter.convert_currency(amount, from_currency, to_currency)
+    try:
+        logger.info(f"Начинаем конвертацию: {amount} {from_currency} -> {to_currency}")
+        result = await converter.convert_currency(amount, from_currency, to_currency)
+        logger.info(f"Результат конвертации: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Ошибка в convert_booster_balance: {e}")
+        return amount
 
 async def get_current_rates() -> Dict[str, float]:
     """Получает текущие курсы валют"""

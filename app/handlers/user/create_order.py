@@ -934,14 +934,14 @@ async def proceed_to_next_step(obj, state: FSMContext):
         # Для буста через аккаунт сначала запрашиваем логин
         if isinstance(obj, CallbackQuery):
             await obj.message.edit_text(
-                "� <b>Логин аккаунта</b>\n\n"
+                "👤 <b>Логин аккаунта</b>\n\n"
                 "Введите логин от вашего игрового аккаунта:",
                 parse_mode="HTML",
-                reply_markup=back_keyboard("back_to_target_gradation")
+                reply_markup=back_keyboard("back_to_target_gradation")  
             )
         else:
             sent_message = await obj.answer(
-                "� <b>Логин аккаунта</b>\n\n"
+                "👤 <b>Логин аккаунта</b>\n\n"
                 "Введите логин от вашего игрового аккаунта:",
                 parse_mode="HTML",
                 reply_markup=back_keyboard("back_to_target_gradation")

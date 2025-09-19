@@ -23,3 +23,12 @@ def get_active_balance(user):
     elif user.region == "🇰🇿 КЗ":
         return user.balance_kz, user.bonus_kz, "₸"
     return 0, 0, ""
+
+def get_currency_info(currency_code: str) -> dict:
+    """Получает информацию о валюте по коду"""
+    currency_map = {
+        "kg": {"name": "сом (КР)", "symbol": "сом", "flag": "🇰🇬"},
+        "kz": {"name": "тенге (КЗ)", "symbol": "₸", "flag": "🇰🇿"},
+        "ru": {"name": "рубли (РУ)", "symbol": "₽", "flag": "🇷🇺"}
+    }
+    return currency_map.get(currency_code, {"name": "неизвестная валюта", "symbol": "", "flag": "❓"})

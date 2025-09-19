@@ -28,6 +28,7 @@ class BoosterAccount(Base):
     balance_kg = Column(Float, default=0)  # Баланс в сомах (КР)
     balance_kz = Column(Float, default=0)  # Баланс в тенге (КЗ)
     balance_ru = Column(Float, default=0)  # Баланс в рублях (РУ)
+    balance_usd = Column(Float, default=0)  # Баланс в долларах (USD)
     status = Column(String, default="active") 
 
 class BoosterPayout(Base):
@@ -37,6 +38,21 @@ class BoosterPayout(Base):
     amount = Column(Float)                     
     paid_at = Column(DateTime(timezone=True), server_default=func.now())
     comment = Column(String)
+
+class BoosterPayoutRequest(Base):
+    __tablename__ = "booster_payout_requests"
+    id = Column(Integer, primary_key=True)
+    booster_account_id = Column(Integer, ForeignKey("booster_accounts.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    currency = Column(String, nullable=False)  # "kg", "kz", "ru"
+    payment_details = Column(Text, nullable=False)  # Реквизиты для выплаты
+    status = Column(String, default="pending")  # pending, approved, rejected
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    admin_comment = Column(String, nullable=True)
+    admin_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Кто обработал запрос
+    receipt_file_id = Column(String, nullable=True)  # file_id чека выплаты
 
 class PaymentRequest(Base):
     __tablename__ = "payment_requests"
@@ -130,6 +146,9 @@ class Order(Base):
     
     # Связи
     assigned_booster_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Файлы доказательств завершения (JSON массив file_id)
+    completion_files = Column(Text, nullable=True)  # JSON массив с file_id и типами файлов
     
     def __repr__(self):
         return f"<Order {self.order_id}>"

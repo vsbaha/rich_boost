@@ -10,7 +10,9 @@ class AdminStates(StatesGroup):
     searching_order = State() 
     changing_price = State() 
     adding_comment = State() 
-    rejecting_completion = State()  
+    rejecting_completion = State()
+    entering_reject_comment = State()  # Для отклонения выплат
+    uploading_payout_receipt = State()  # Загрузка чека выплаты  
     
 class SearchStates(StatesGroup):
     waiting_for_id = State()

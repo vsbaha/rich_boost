@@ -6,6 +6,7 @@ from app.config import BOT_TOKEN
 from app.handlers.common import router as common_router
 from app.handlers.admin import router as admin_router
 from app.handlers.admin.currency_admin import router as currency_admin_router
+from app.handlers.admin.payout_management import router as payout_admin_router
 from app.handlers.user import router as user_router
 from app.handlers.booster import router as booster_router
 from app.database.crud import init_db
@@ -33,6 +34,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(admin_router)
     dp.include_router(currency_admin_router)
+    dp.include_router(payout_admin_router)
     dp.include_router(user_router)
     dp.include_router(booster_router)
     dp.include_router(common_router)

@@ -1,4 +1,4 @@
-from .models import User, Base, BoosterAccount, PaymentRequest
+from .models import User, Base, BoosterAccount, PaymentRequest, BoosterPayoutRequest
 from sqlalchemy.future import select
 from .models import Base
 from .db import engine
@@ -90,18 +90,264 @@ async def update_booster_balance(user_id, amount, currency="руб."):
         result = await session.execute(select(BoosterAccount).where(BoosterAccount.user_id == user_id))
         account = result.scalar_one_or_none()
         if account:
-            # Определяем поле баланса по валюте
-            currency_fields = {
-                "сом": "balance_kg",
-                "тенге": "balance_kz", 
-                "руб.": "balance_ru"
-            }
-            balance_field = currency_fields.get(currency, "balance_ru")
-            
-            # Обновляем соответствующий баланс
-            current_balance = getattr(account, balance_field, 0)
-            setattr(account, balance_field, current_balance + amount)
+            if currency == "USD":
+                current_balance = getattr(account, "balance_usd", 0)
+                setattr(account, "balance_usd", current_balance + amount)
+            else:
+                # legacy: allow updating local currency if needed
+                currency_fields = {
+                    "сом": "balance_kg",
+                    "тенге": "balance_kz", 
+                    "руб.": "balance_ru"
+                }
+                balance_field = currency_fields.get(currency, "balance_ru")
+                current_balance = getattr(account, balance_field, 0)
+                setattr(account, balance_field, current_balance + amount)
             await session.commit()
+
+async def update_booster_balance_conversion(user_id, usd_amount, converted_amount, target_region):
+    """Конвертирует USD баланс в локальную валюту"""
+    logger.info(f"[CONVERSION] Начало конвертации для пользователя {user_id}: {usd_amount} USD -> {converted_amount} в регион {target_region}")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            # Сначала находим пользователя по tg_id
+            user_result = await session.execute(select(User).where(User.tg_id == user_id))
+            user = user_result.scalar_one_or_none()
+            
+            if not user:
+                logger.error(f"[CONVERSION] Пользователь не найден для tg_id {user_id}")
+                return False
+            
+            # Затем ищем аккаунт бустера по ID пользователя
+            result = await session.execute(select(BoosterAccount).where(BoosterAccount.user_id == user.id))
+            account = result.scalar_one_or_none()
+            
+            if not account:
+                logger.error(f"[CONVERSION] Аккаунт бустера не найден для пользователя {user_id} (внутренний ID: {user.id})")
+                return False
+            
+            logger.info(f"[CONVERSION] Текущий баланс USD: {account.balance_usd}")
+            
+            # Проверяем достаточность USD баланса
+            if account.balance_usd < usd_amount:
+                logger.error(f"[CONVERSION] Недостаточно средств. Запрошено: {usd_amount}, доступно: {account.balance_usd}")
+                return False
+            
+            # Списываем USD
+            old_usd_balance = account.balance_usd
+            account.balance_usd -= usd_amount
+            logger.info(f"[CONVERSION] USD баланс изменен с {old_usd_balance} на {account.balance_usd}")
+            
+            # Зачисляем в локальную валюту
+            if target_region == "kg":
+                old_balance = account.balance_kg
+                account.balance_kg += converted_amount
+                logger.info(f"[CONVERSION] KG баланс изменен с {old_balance} на {account.balance_kg}")
+            elif target_region == "kz":
+                old_balance = account.balance_kz
+                account.balance_kz += converted_amount
+                logger.info(f"[CONVERSION] KZ баланс изменен с {old_balance} на {account.balance_kz}")
+            elif target_region == "ru":
+                old_balance = account.balance_ru
+                account.balance_ru += converted_amount
+                logger.info(f"[CONVERSION] RU баланс изменен с {old_balance} на {account.balance_ru}")
+            else:
+                logger.error(f"[CONVERSION] Неизвестный регион: {target_region}")
+                return False
+            
+            await session.commit()
+            logger.info(f"[CONVERSION] Транзакция успешно завершена для пользователя {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[CONVERSION] Ошибка при конвертации для пользователя {user_id}: {e}")
+            await session.rollback()
+            import traceback
+            logger.error(f"[CONVERSION] Полная ошибка: {traceback.format_exc()}")
+            return False
+
+# === PAYOUT REQUEST FUNCTIONS ===
+
+async def create_payout_request(tg_user_id: int, amount: float, currency: str, payment_details: str):
+    """Создает новый запрос на выплату"""
+    logger.info(f"[PAYOUT REQUEST] Создание запроса выплаты для пользователя {tg_user_id}: {amount} {currency}")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            # Находим пользователя по tg_id
+            user_result = await session.execute(select(User).where(User.tg_id == tg_user_id))
+            user = user_result.scalar_one_or_none()
+            
+            if not user:
+                logger.error(f"[PAYOUT REQUEST] Пользователь не найден для tg_id {tg_user_id}")
+                return None
+                
+            # Находим аккаунт бустера
+            account_result = await session.execute(select(BoosterAccount).where(BoosterAccount.user_id == user.id))
+            account = account_result.scalar_one_or_none()
+            
+            if not account:
+                logger.error(f"[PAYOUT REQUEST] Аккаунт бустера не найден для пользователя {tg_user_id}")
+                return None
+                
+            # Проверяем достаточность средств
+            if currency == "kg" and account.balance_kg < amount:
+                logger.error(f"[PAYOUT REQUEST] Недостаточно средств KG: {account.balance_kg} < {amount}")
+                return None
+            elif currency == "kz" and account.balance_kz < amount:
+                logger.error(f"[PAYOUT REQUEST] Недостаточно средств KZ: {account.balance_kz} < {amount}")
+                return None
+            elif currency == "ru" and account.balance_ru < amount:
+                logger.error(f"[PAYOUT REQUEST] Недостаточно средств RU: {account.balance_ru} < {amount}")
+                return None
+                
+            # Создаем запрос
+            payout_request = BoosterPayoutRequest(
+                booster_account_id=account.id,
+                amount=amount,
+                currency=currency,
+                payment_details=payment_details,
+                status="pending"
+            )
+            
+            session.add(payout_request)
+            await session.commit()
+            await session.refresh(payout_request)
+            
+            logger.info(f"[PAYOUT REQUEST] Создан запрос #{payout_request.id} для пользователя {tg_user_id}")
+            return payout_request
+            
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при создании запроса для пользователя {tg_user_id}: {e}")
+            await session.rollback()
+            import traceback
+            logger.error(f"[PAYOUT REQUEST] Полная ошибка: {traceback.format_exc()}")
+            return None
+
+async def get_payout_requests(status: str = None, limit: int = 20, offset: int = 0):
+    """Получает список запросов на выплату"""
+    async with AsyncSessionLocal() as session:
+        try:
+            query = select(BoosterPayoutRequest).join(BoosterAccount).join(User, BoosterAccount.user_id == User.id)
+            
+            if status:
+                query = query.where(BoosterPayoutRequest.status == status)
+                
+            query = query.order_by(BoosterPayoutRequest.created_at.desc()).limit(limit).offset(offset)
+            
+            result = await session.execute(query)
+            return result.scalars().all()
+            
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при получении списка запросов: {e}")
+            return []
+
+async def get_payout_request_by_id(request_id: int):
+    """Получает запрос на выплату по ID"""
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(select(BoosterPayoutRequest).where(BoosterPayoutRequest.id == request_id))
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при получении запроса {request_id}: {e}")
+            return None
+
+async def update_payout_status(request_id: int, status: str, admin_tg_id: int, admin_comment: str = None):
+    """Обновляет статус запроса на выплату"""
+    logger.info(f"[PAYOUT REQUEST] Обновление статуса запроса {request_id}: {status}")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            # Находим админа
+            admin_result = await session.execute(select(User).where(User.tg_id == admin_tg_id))
+            admin = admin_result.scalar_one_or_none()
+            
+            if not admin:
+                logger.error(f"[PAYOUT REQUEST] Админ не найден для tg_id {admin_tg_id}")
+                return False
+                
+            # Находим запрос
+            request_result = await session.execute(select(BoosterPayoutRequest).where(BoosterPayoutRequest.id == request_id))
+            payout_request = request_result.scalar_one_or_none()
+            
+            if not payout_request:
+                logger.error(f"[PAYOUT REQUEST] Запрос {request_id} не найден")
+                return False
+                
+            # Обновляем статус
+            payout_request.status = status
+            payout_request.admin_id = admin.id
+            payout_request.admin_comment = admin_comment
+            payout_request.processed_at = func.now()
+            
+            # Если запрос одобрен, списываем средства с баланса
+            if status == "approved":
+                account_result = await session.execute(
+                    select(BoosterAccount).where(BoosterAccount.id == payout_request.booster_account_id)
+                )
+                account = account_result.scalar_one_or_none()
+                
+                if account:
+                    if payout_request.currency == "kg":
+                        account.balance_kg -= payout_request.amount
+                    elif payout_request.currency == "kz":
+                        account.balance_kz -= payout_request.amount
+                    elif payout_request.currency == "ru":
+                        account.balance_ru -= payout_request.amount
+                        
+                    logger.info(f"[PAYOUT REQUEST] Списано {payout_request.amount} {payout_request.currency} с аккаунта {account.id}")
+            
+            await session.commit()
+            logger.info(f"[PAYOUT REQUEST] Статус запроса {request_id} обновлен на {status}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при обновлении статуса запроса {request_id}: {e}")
+            await session.rollback()
+            import traceback
+            logger.error(f"[PAYOUT REQUEST] Полная ошибка: {traceback.format_exc()}")
+            return False
+
+async def get_user_payout_requests(tg_user_id: int, limit: int = 10):
+    """Получает запросы на выплату конкретного пользователя"""
+    async with AsyncSessionLocal() as session:
+        try:
+            # Находим пользователя
+            user_result = await session.execute(select(User).where(User.tg_id == tg_user_id))
+            user = user_result.scalar_one_or_none()
+            
+            if not user:
+                return []
+                
+            # Находим аккаунт бустера
+            account_result = await session.execute(select(BoosterAccount).where(BoosterAccount.user_id == user.id))
+            account = account_result.scalar_one_or_none()
+            
+            if not account:
+                return []
+                
+            # Получаем запросы
+            query = select(BoosterPayoutRequest).where(
+                BoosterPayoutRequest.booster_account_id == account.id
+            ).order_by(BoosterPayoutRequest.created_at.desc()).limit(limit)
+            
+            result = await session.execute(query)
+            return result.scalars().all()
+            
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при получении запросов пользователя {tg_user_id}: {e}")
+            return []
+
+async def get_booster_account_by_id(account_id: int):
+    """Получает аккаунт бустера по ID"""
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(select(BoosterAccount).where(BoosterAccount.id == account_id))
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при получении аккаунта бустера {account_id}: {e}")
+            return None
 
 async def get_booster_balance_by_region(user_id, region):
     """Получает баланс бустера в валюте его региона"""
@@ -742,3 +988,72 @@ async def get_users_by_role(role: str):
     except Exception as e:
         logger.error(f"Ошибка получения пользователей с ролью '{role}': {e}")
         return []
+
+async def approve_payout_request(request_id: int, receipt_file_id: str):
+    """Одобряет запрос на выплату с загруженным чеком"""
+    logger.info(f"[PAYOUT REQUEST] Одобрение запроса выплаты {request_id} с чеком {receipt_file_id}")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(
+                select(BoosterPayoutRequest).where(BoosterPayoutRequest.id == request_id)
+            )
+            payout_request = result.scalar_one_or_none()
+            
+            if not payout_request:
+                logger.error(f"[PAYOUT REQUEST] Запрос выплаты {request_id} не найден")
+                return None
+                
+            # Обновляем статус и добавляем чек
+            payout_request.status = "approved"
+            payout_request.receipt_file_id = receipt_file_id
+            payout_request.updated_at = datetime.now()
+            
+            await session.commit()
+            logger.info(f"[PAYOUT REQUEST] Запрос выплаты {request_id} одобрен с чеком")
+            return payout_request
+            
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[PAYOUT REQUEST] Ошибка при одобрении запроса {request_id}: {e}")
+            return None
+
+async def reject_payout_request(request_id: int):
+    """Отклоняет запрос на выплату"""
+    logger.info(f"[PAYOUT REQUEST] Отклонение запроса выплаты {request_id}")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(
+                select(BoosterPayoutRequest).where(BoosterPayoutRequest.id == request_id)
+            )
+            payout_request = result.scalar_one_or_none()
+            
+            if not payout_request:
+                logger.error(f"[PAYOUT REQUEST] Запрос выплаты {request_id} не найден")
+                return None
+                
+            # Обновляем статус
+            payout_request.status = "rejected"
+            payout_request.updated_at = datetime.now()
+            
+            await session.commit()
+            logger.info(f"[PAYOUT REQUEST] Запрос выплаты {request_id} отклонен")
+            return payout_request
+            
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[PAYOUT REQUEST] Ошибка при отклонении запроса {request_id}: {e}")
+            return None
+
+async def get_all_payout_requests():
+    """Получает все запросы на выплату"""
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(
+                select(BoosterPayoutRequest).order_by(BoosterPayoutRequest.created_at.desc())
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error(f"[PAYOUT REQUEST] Ошибка при получении всех запросов: {e}")
+            return []

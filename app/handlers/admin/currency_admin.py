@@ -17,12 +17,9 @@ async def show_currency_rates(message: Message):
         rates = await get_current_rates()
         
         text = "📊 <b>Текущие курсы валют</b>\n\n"
-        text += "<b>Основные курсы:</b>\n"
         text += f"🇰🇬→🇰🇿 1 сом = <b>{rates.get('KGS_to_KZT', 0):.3f}</b> тенге\n"
         text += f"🇰🇬→🇷🇺 1 сом = <b>{rates.get('KGS_to_RUB', 0):.3f}</b> руб.\n"
         text += f"🇰🇿→🇷🇺 1 тенге = <b>{rates.get('KZT_to_RUB', 0):.3f}</b> руб.\n\n"
-        
-        text += "<b>Обратные курсы:</b>\n"
         text += f"🇰🇿→🇰🇬 1 тенге = <b>{rates.get('KZT_to_KGS', 0):.3f}</b> сом\n"
         text += f"🇷🇺→🇰🇬 1 руб. = <b>{rates.get('RUB_to_KGS', 0):.3f}</b> сом\n"
         text += f"🇷🇺→🇰🇿 1 руб. = <b>{rates.get('RUB_to_KZT', 0):.3f}</b> тенге\n\n"

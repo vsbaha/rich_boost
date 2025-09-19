@@ -8,14 +8,26 @@ def booster_balance_keyboard():
                 InlineKeyboardButton(text="🔄 Обновить курсы", callback_data="booster_refresh_rates"),
             ],
             [
-                InlineKeyboardButton(text="💱 Конвертировать в сомы", callback_data="booster_convert_to:kg"),
-                InlineKeyboardButton(text="💱 Конвертировать в тенге", callback_data="booster_convert_to:kz"),
+                InlineKeyboardButton(text="💱 Конвертировать", callback_data="booster_convert_menu"),
             ],
             [
-                InlineKeyboardButton(text="💱 Конвертировать в рубли", callback_data="booster_convert_to:ru"),
+                InlineKeyboardButton(text="💸 Запросить выплату", callback_data="booster_request_payout"),
+                InlineKeyboardButton(text="📋 Мои запросы", callback_data="my_payout_requests"),
+            ]
+        ]
+    )
+
+def booster_convert_menu_keyboard():
+    """Клавиатура выбора валюты для конвертации"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🇰🇬 В сомы", callback_data="booster_convert_to:kg"),
+                InlineKeyboardButton(text="🇰🇿 В тенге", callback_data="booster_convert_to:kz"),
+                InlineKeyboardButton(text="🇷🇺 В рубли", callback_data="booster_convert_to:ru"),
             ],
             [
-                InlineKeyboardButton(text="📊 Показать курсы", callback_data="booster_show_rates"),
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="booster_cancel_convert_menu"),
             ]
         ]
     )
